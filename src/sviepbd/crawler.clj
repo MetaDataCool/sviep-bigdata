@@ -24,9 +24,11 @@
   (-> element (.select query) seq))
 (def select-one (comp first select))
 
-(defn ^Element ancestor-with-tag "Finds the closest ancestor of an element that has the given tag" 
+(defn ^Element ancestor-with-tag "Finds the closest ancestor of an element (including itself) that has the given tag" 
   [tag,^Element e]
-  (->> (.parents e) seq (filter (fn [^Element p] (= (.. p tag getName) tag))) first))
+  (if (= (.. e tag getName) tag)
+    e
+    (->> (.parents e) seq (filter (fn [^Element p] (= (.. p tag getName) tag))) first)))
 
 (def td-ancestor (partial ancestor-with-tag "td"))
 
@@ -125,7 +127,13 @@
     ))
 
 (def regular-fields-opts "fields to look up in the tables, with the corresponding quantity type"
-  {;; Financial Performance Metrics
+  {;; Overview
+   "Overall" {:field-name "overall_rating",:read-value read-percentage}
+   (str (char 160) (char 160) "Financial") ;; these 2 guys have a weird form due to the presence of the &nsbp HTML entity.
+   {:field-name "financial_rating",:read-value read-percentage},
+   (str (char 160) (char 160) "Accountability & Transparency") {:field-name "accountability_and_transparency_rating",:read-value read-percentage}
+   
+   ;; Financial Performance Metrics
    "Program Expenses" {:field-name "program_expenses",:read-value read-percentage}
    "Administrative Expenses" {:field-name "administrative_expenses",:read-value read-percentage}
    "Fundraising Expenses" {:field-name "fundraising_expenses",:read-value read-percentage}
@@ -200,7 +208,8 @@
                              (select-one "p")
                              own-text)
         
-        table-values (read-table-fields regular-fields-opts (select parsed ".summaryBox .shadedtable td a")) ;; fields that are not the income statement
+        table-values (read-table-fields regular-fields-opts ;; fields that are not the income statement 
+                                        (select parsed ".summaryBox .shadedtable td")) 
         
         is-elem (->> (select parsed ".summaryBox h2 a") ;; income statement element
                   (filter #(= (own-text %) "Income Statement"))
@@ -223,6 +232,7 @@
                      :website_url website_url
                      :mission-statement mission-statement
                      
+                     ;:values (concat table-values is-values)
                      :address (s/trim address)
                      :tel tel :fax fax
                      :ein ein
