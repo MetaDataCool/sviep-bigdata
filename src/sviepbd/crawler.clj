@@ -10,6 +10,8 @@
             [taoensso.timbre :as log]
             [cheshire.core :as json]
             [clojure.java.io :as io]
+            
+            [clojure.core.async :as a]
             )
   (:use clojure.repl clojure.pprint))
 
@@ -243,6 +245,58 @@
             ret (concat table-values is-values))
     ))
 
+;; --------------------------------
+;; Crawl org's website
+;; --------------------------------
+(defn fetch-webiste [{:keys [website_url title] :as m}]
+  (if website_url
+    (do 
+      (log/debug (str "Fetching website of " title " at : " website_url))
+      (let [body (-> @(http/get website_url {:as :text}) :body)]
+        (cond-> m body (assoc :website-dom (parse-html body)))))
+    m))
+
+(defn extract-fb-id "Attemps to read a FB id from the path of a URL." 
+  [url-path]
+  (or (get (->> url-path (re-matches #"/([^/]+)")) 1)
+      (get (->> url-path (re-matches #"/pages/([^/]+)/(\d+)")) 2)
+      ))
+
+(defn crawl-website [{:keys [website-dom] :as org-data}] ;; for now only searches for a Facebook URL
+  (if website-dom
+    (-> (if-let [facebook-a (->> (select website-dom "a")
+                             (filter (fn [e] (re-find #"www.facebook.com" (attr "href" e))))
+                             first
+                             )]
+         (let [facebook-url (java.net.URL. (attr "href" facebook-a))
+               facebook-id (->> facebook-a (attr "href") java.net.URL. .getPath extract-fb-id)]
+           (cond-> org-data
+                   facebook-id (assoc :facebook_id facebook-id)))
+         org-data)
+      (dissoc :website-dom))
+    org-data))
+
+;; --------------------------------
+;; Facebook
+;; --------------------------------
+(def my-token "734266833319223|yiHW63aGEayDOoJqus2EVD8kaaw")
+
+;; see https://developers.facebook.com/docs/graph-api/reference/v2.2/post
+(defn process-post [fb-post]
+  (select-keys fb-post [:message :name :description
+                        :id :type :created_time :updated_time :link
+                        :story :status_type
+                        :caption :icon :object_id]))
+
+(defn fetch-facebook-posts [{:keys [facebook_id title] :as org-data}]
+  (if facebook_id
+    (let [pre-log (log/debug (str "Fetching FB posts for " title " with FB id " facebook_id)) 
+          posts (-> @(http/get (str "https://graph.facebook.com/" facebook_id "/feed")
+                               {:oauth-token my-token})
+                  :body (json/decode true)
+                  :data)]
+      (cond-> org-data posts (assoc :fb_posts (->> posts (map process-post) doall))))
+    org-data))
 
 ;; --------------------------------
 ;; NLP
@@ -309,6 +363,14 @@
 
 (def errors (atom []))
 (def errors-count (atom 0))
+(comment ;; print an errors sumamry
+  (->> @errors 
+    (map (fn [{:keys [error]}]
+           {:class (class error)
+            :stackElement (-> error .getStackTrace (aget 0))}
+           ))
+  frequencies pprint))
+
 
 (defn failsafe-map [f coll]
   (->> coll (map #(try (f %) (catch Exception e 
@@ -319,22 +381,45 @@
                                  (swap! errors conj {:error e :item %})
                                  nil))))
     (filter some?)))
+(defn failsafe-pmap [f coll]
+  (->> coll (pmap #(try (f %) (catch Exception e 
+                                (do 
+                                  (log/warn (str "Problem here : " e))
+                                  ;(.printStackTrace e)
+                                  ;(swap! errors-count inc)
+                                  (swap! errors conj {:error e :item %})
+                                  nil))))
+    (filter some?)))
 
 (defn crawled-seq "Returns a lazy seq of all the crawled pages" 
   []
+  (reset! errors []) (reset! errors-count [])
   (->> result-pages
     (pmap fetch-result-page)
     (failsafe-map crawl-results-page) (apply concat)
     (pmap fetch-org-page)
     (failsafe-map crawl-cn-org-page)
+    (pmap fetch-webiste) (failsafe-map crawl-website)
+    (pmap fetch-facebook-posts)
     ))
+(comment
+  (def sample-orgs (->> (crawled-seq)
+                     (take-nth 100)
+                     shuffle time
+                     ))
+  (def sample-orgs 
+    (->> (json/decode-stream (io/reader "/Users/val/Documents/charity-navigator-organizations.json")
+                             true)
+        (take-nth 100)
+        shuffle time
+        )))
 
 ;; --------------------------------
 ;; Print to output
 ;; --------------------------------
 
 (comment 
-  (with-open [out (io/writer "/Users/val/Documents/out.json")] 
+  (with-open [out (io/writer "/Users/val/Documents/charity-navigator-organizations.json")] 
     (json/generate-stream (crawled-seq) out)
     ))
 
