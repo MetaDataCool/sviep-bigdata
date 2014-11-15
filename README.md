@@ -1,36 +1,3 @@
-# sviepbd
+For now there's only a webcrawler, the code is in src/sviepbd/crawler.clj .
 
-FIXME: description
-
-## Installation
-
-Download from http://example.com/FIXME.
-
-## Usage
-
-FIXME: explanation
-
-    $ java -jar sviepbd-0.1.0-standalone.jar [args]
-
-## Options
-
-FIXME: listing of options this app accepts.
-
-## Examples
-
-...
-
-### Bugs
-
-...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
-
-## License
-
-Copyright © 2014 FIXME
-
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+It's in Clojure. I've used [http-kit](http://http-kit.org/client.html) as an HTTP client, [JSoup](http://jsoup.org/) for parsing HTML and DOM querying, and [cheshire](https://github.com/dakrone/cheshire). It all went very well.
