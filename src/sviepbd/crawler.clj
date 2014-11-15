@@ -1,5 +1,6 @@
 (ns sviepbd.crawler
-  (:import [java.text NumberFormat] 
+  (:import [com.googlecode.htmlcompressor.compressor HtmlCompressor] 
+           [java.text NumberFormat] 
            [java.util Locale] 
            [org.jsoup Jsoup]
            [org.jsoup.nodes Element Document TextNode]
@@ -17,9 +18,9 @@
 
 (def website-domain "http://www.charitynavigator.org/")
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; DOM querying
-;; --------------------------------
+;; ----------------------------------------------------------------
 (defn ^Element parse-html [html] (Jsoup/parse html))
 
 (defn select [^Element element query]
@@ -28,9 +29,7 @@
 
 (defn ^Element ancestor-with-tag "Finds the closest ancestor of an element (including itself) that has the given tag" 
   [tag,^Element e]
-  (if (= (.. e tag getName) tag)
-    e
-    (->> (.parents e) seq (filter (fn [^Element p] (= (.. p tag getName) tag))) first)))
+  (->> (.parents e) seq (cons e) (filter (fn [^Element p] (= (.. p tag getName) tag))) first))
 
 (def td-ancestor (partial ancestor-with-tag "td"))
 
@@ -44,9 +43,15 @@
 
 (defn attr [attr-name,^Element e] (.attr e attr-name))
 
-;; --------------------------------
+(def minify-html (let [compressor (doto (HtmlCompressor.) 
+                                    (.setCompressCss true) 
+                                    ;(.setCompressJavaScript true)
+                                    )] 
+                   #(.compress compressor %)))
+
+;; ----------------------------------------------------------------
 ;; Numbers & fields parsing
-;; --------------------------------
+;; ----------------------------------------------------------------
 (defn find-number "Finds the number part of a string." 
   [s] (re-find #"[\d\.,]+" s))
 (def parse-number
@@ -66,14 +71,14 @@
     ))
 
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; crawl results page
-;; --------------------------------
+;; ----------------------------------------------------------------
 
 (defn fetch-result-page [{:keys [result-page-url] :as m}]
   (log/debug (str "Fetching " result-page-url))
   (assoc m :result-page-html
-         (:body @(http/get result-page-url))))
+         (minify-html (:body @(http/get result-page-url)))))
 
 (comment 
   (do 
@@ -111,13 +116,13 @@
          tr-orgs))
   )
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; Crawling org page
-;; --------------------------------
+;; ----------------------------------------------------------------
 
 (defn fetch-org-page [{:keys [org-page-url] :as m}]
   (log/debug (str "Fetching Organization page : " org-page-url))
-  (assoc m :org-cn-html (:body @(http/get org-page-url))))
+  (assoc m :org-cn-html (minify-html (:body @(http/get org-page-url)))))
 
 (defn read-table-fields [fields-opts td>a-elems]
   (->> td>a-elems
@@ -245,15 +250,16 @@
             ret (concat table-values is-values))
     ))
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; Crawl org's website
-;; --------------------------------
+;; ----------------------------------------------------------------
 (defn fetch-webiste [{:keys [website_url title] :as m}]
   (if website_url
     (do 
       (log/debug (str "Fetching website of " title " at : " website_url))
       (let [body (-> @(http/get website_url {:as :text}) :body)]
-        (cond-> m body (assoc :website-dom (parse-html body)))))
+        (cond-> m body (assoc :website-dom (parse-html body)
+                              :website-html (minify-html body)))))
     m))
 
 (defn extract-fb-id "Attemps to read a FB id from the path of a URL." 
@@ -276,9 +282,9 @@
       (dissoc :website-dom))
     org-data))
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; Facebook
-;; --------------------------------
+;; ----------------------------------------------------------------
 (def my-token "734266833319223|yiHW63aGEayDOoJqus2EVD8kaaw")
 
 ;; see https://developers.facebook.com/docs/graph-api/reference/v2.2/post
@@ -298,60 +304,60 @@
       (cond-> org-data posts (assoc :fb_posts (->> posts (map process-post) doall))))
     org-data))
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; NLP
-;; --------------------------------
-(def stopwords #{"a" "about" "above" "after" "again" "against" "all" "am" "an" "and" "any" "are" "aren't" "as" "at" "be" "because" "been" "before" "being" "below" "between" "both" "but" "by" "can't" "cannot" "could" "couldn't" "did" "didn't" "do" "does" "doesn't" "doing" "don't" "down" "during" "each" "few" "for" "from" "further" "had" "hadn't" "has" "hasn't" "have" "haven't" "having" "he" "he'd" "he'll" "he's" "her" "here" "here's" "hers" "herself" "him" "himself" "his" "how" "how's" "i" "i'd" "i'll" "i'm" "i've" "if" "in" "into" "is" "isn't" "it" "it's" "its" "itself" "let's" "me" "more" "most" "mustn't" "my" "myself" "no" "nor" "not" "of" "off" "on" "once" "only" "or" "other" "ought" "our" "ours" "ourselves" "out" "over" "own" "same" "shan't" "she" "she'd" "she'll" "she's" "should" "shouldn't" "so" "some" "such" "than" "that" "that's" "the" "their" "theirs" "them" "themselves" "then" "there" "there's" "these" "they" "they'd" "they'll" "they're" "they've" "this" "those" "through" "to" "too" "under" "until" "up" "very" "was" "wasn't" "we" "we'd" "we'll" "we're" "we've" "were" "weren't" "what" "what's" "when" "when's" "where" "where's" "which" "while" "who" "who's" "whom" "why" "why's" "with" "won't" "would" "wouldn't" "you" "you'd" "you'll" "you're" "you've" "your" "yours" "yourself" "yourselves"})
+;; ----------------------------------------------------------------
+(def stopword? #{"a" "about" "above" "after" "again" "against" "all" "am" "an" "and" "any" "are" "aren't" "as" "at" "be" "because" "been" "before" "being" "below" "between" "both" "but" "by" "can't" "cannot" "could" "couldn't" "did" "didn't" "do" "does" "doesn't" "doing" "don't" "down" "during" "each" "few" "for" "from" "further" "had" "hadn't" "has" "hasn't" "have" "haven't" "having" "he" "he'd" "he'll" "he's" "her" "here" "here's" "hers" "herself" "him" "himself" "his" "how" "how's" "i" "i'd" "i'll" "i'm" "i've" "if" "in" "into" "is" "isn't" "it" "it's" "its" "itself" "let's" "me" "more" "most" "mustn't" "my" "myself" "no" "nor" "not" "of" "off" "on" "once" "only" "or" "other" "ought" "our" "ours" "ourselves" "out" "over" "own" "same" "shan't" "she" "she'd" "she'll" "she's" "should" "shouldn't" "so" "some" "such" "than" "that" "that's" "the" "their" "theirs" "them" "themselves" "then" "there" "there's" "these" "they" "they'd" "they'll" "they're" "they've" "this" "those" "through" "to" "too" "under" "until" "up" "very" "was" "wasn't" "we" "we'd" "we'll" "we're" "we've" "were" "weren't" "what" "what's" "when" "when's" "where" "where's" "which" "while" "who" "who's" "whom" "why" "why's" "with" "won't" "would" "wouldn't" "you" "you'd" "you'll" "you're" "you've" "your" "yours" "yourself" "yourselves"})
 
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; Orgs seq
-;; --------------------------------
+;; ----------------------------------------------------------------
 
 (def results-pages-base 
   [{:orgs-count 290,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=1&cuid=2"}
-     {:orgs-count 80,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=1&cuid=1"}
-     {:orgs-count 73,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=1&cuid=32"}
+   {:orgs-count 80,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=1&cuid=1"}
+   {:orgs-count 73,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=1&cuid=32"}
      
-     {:orgs-count 115,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=6"}
-     {:orgs-count 343,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=3"}
-     {:orgs-count 437,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=4"}
-     {:orgs-count 108,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=5"}
-     
-     {:orgs-count 101,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=9"}
-     {:orgs-count 189,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=8"}
-     {:orgs-count 61,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=33"}
-     {:orgs-count 445,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=7"}
-     
-     {:orgs-count 271,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=4&cuid=11"}
-     {:orgs-count 109,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=4&cuid=10"}
-     
-     {:orgs-count 309,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=13"}
-     {:orgs-count 245,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=34"}
-     {:orgs-count 155,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=12"}
-     {:orgs-count 79,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=14"}
-     
-     {:orgs-count 303,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=17"}
-     {:orgs-count 460,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=16"}
-     {:orgs-count 200,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=18"}
-     {:orgs-count 214,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=15"}
-     {:orgs-count 303,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=28"}
-     {:orgs-count 572,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=29"}
-     
-     {:orgs-count 295,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=20"}
-     {:orgs-count 149,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=19"}
-     {:orgs-count 61,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=30"}
-     {:orgs-count 138,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=31"}
-     
-     {:orgs-count 284,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=21"}
-     {:orgs-count 684,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=23"}
-     {:orgs-count 174,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=24"}
-     {:orgs-count 70,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=22"}
-     {:orgs-count 222,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=27"}
-     
-     {:orgs-count 305,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=9&cuid=26"}
-     {:orgs-count 135,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=9&cuid=25"}
-     ])
+   {:orgs-count 115,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=6"}
+   {:orgs-count 343,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=3"}
+   {:orgs-count 437,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=4"}
+   {:orgs-count 108,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=2&cuid=5"}
+   
+   {:orgs-count 101,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=9"}
+   {:orgs-count 189,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=8"}
+   {:orgs-count 61,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=33"}
+   {:orgs-count 445,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=3&cuid=7"}
+   
+   {:orgs-count 271,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=4&cuid=11"}
+   {:orgs-count 109,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=4&cuid=10"}
+   
+   {:orgs-count 309,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=13"}
+   {:orgs-count 245,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=34"}
+   {:orgs-count 155,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=12"}
+   {:orgs-count 79,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=5&cuid=14"}
+   
+   {:orgs-count 303,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=17"}
+   {:orgs-count 460,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=16"}
+   {:orgs-count 200,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=18"}
+   {:orgs-count 214,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=15"}
+   {:orgs-count 303,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=28"}
+   {:orgs-count 572,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=6&cuid=29"}
+   
+   {:orgs-count 295,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=20"}
+   {:orgs-count 149,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=19"}
+   {:orgs-count 61,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=30"}
+   {:orgs-count 138,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=7&cuid=31"}
+   
+   {:orgs-count 284,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=21"}
+   {:orgs-count 684,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=23"}
+   {:orgs-count 174,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=24"}
+   {:orgs-count 70,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=22"}
+   {:orgs-count 222,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=8&cuid=27"}
+   
+   {:orgs-count 305,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=9&cuid=26"}
+   {:orgs-count 135,:result-page-url "http://www.charitynavigator.org/index.cfm?bay=search.results&cgid=9&cuid=25"}
+   ])
 (def result-pages 
   (mapcat (fn [{:keys [orgs-count result-page-url] :as m}]
             (->> orgs-count (range 1) (take-nth 20) 
@@ -400,8 +406,14 @@
     (pmap fetch-org-page)
     (failsafe-map crawl-cn-org-page)
     (pmap fetch-webiste) (failsafe-map crawl-website)
-    (pmap fetch-facebook-posts)
+    (pmap fetch-facebook-posts) ;; ~ 6 000 000 ms
     ))
+
+(defn progress-logging-seq [seq]
+  (let [progress (atom 0)]
+    (map (fn [item] (log/debug (str "PROGRESS : ITEM " (swap! progress inc))) item) seq)
+    ))
+
 (comment
   (def sample-orgs (->> (crawled-seq)
                      (take-nth 100)
@@ -414,9 +426,9 @@
         shuffle time
         )))
 
-;; --------------------------------
+;; ----------------------------------------------------------------
 ;; Print to output
-;; --------------------------------
+;; ----------------------------------------------------------------
 
 (comment 
   (with-open [out (io/writer "/Users/val/Documents/charity-navigator-organizations.json")] 
