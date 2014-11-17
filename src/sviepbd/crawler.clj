@@ -11,6 +11,12 @@
             [taoensso.timbre :as log]
             [cheshire.core :as json]
             [clojure.java.io :as io]
+            [clojure.java.jdbc :as sql]
+            [clj-time.core :as time]
+            [clj-time.format :as tf]
+            [clj-time.coerce :as tc]
+            [monger.core :as mg]
+            [monger.collection :as mc]
             
             [clojure.core.async :as a]
             )
@@ -44,7 +50,7 @@
 (defn attr [attr-name,^Element e] (.attr e attr-name))
 
 (def minify-html (let [compressor (doto (HtmlCompressor.) 
-                                    (.setCompressCss true) 
+                                    (.setCompressCss true)
                                     ;(.setCompressJavaScript true)
                                     )] 
                    #(.compress compressor %)))
@@ -108,8 +114,8 @@
                (dissoc :result-page-html)
                (assoc :category category
                       :cause cause
-                      :org-name org-name
-                      :org-page-url org-page-url
+                      :org_name org-name
+                      :org_page_url org-page-url
                       :location location
                       ))
              ))
@@ -120,9 +126,9 @@
 ;; Crawling org page
 ;; ----------------------------------------------------------------
 
-(defn fetch-org-page [{:keys [org-page-url] :as m}]
-  (log/debug (str "Fetching Organization page : " org-page-url))
-  (assoc m :org-cn-html (minify-html (:body @(http/get org-page-url)))))
+(defn fetch-org-page [{:keys [org_page_url] :as m}]
+  (log/debug (str "Fetching Organization page : " org_page_url))
+  (assoc m :org-cn-html (minify-html (:body @(http/get org_page_url)))))
 
 (defn read-table-fields [fields-opts td>a-elems]
   (->> td>a-elems
@@ -155,7 +161,7 @@
    "Audited financials prepared by independent accountant" {:field-name "audited_financials_prepared_by_independent_accountant",:read-value read-checkbox}
    "Does Not Provide Loan(s) to or Receive Loan(s) From related parties" {:field-name "does_not_provide_loans_to_or_receive_loans_from_related_parties",:read-value read-checkbox}
    "Documents Board Meeting Minutes" {:field-name "documents_board_meeting_minutes",:read-value read-checkbox}
-   "Provided copy of Form 990 to organization's governing body in advance of filing" {:field-name "provided_copy_of_form_990_to_organization's_governing_body_in_advance_of_filing",:read-value read-checkbox}
+   "Provided copy of Form 990 to organization's governing body in advance of filing" {:field-name :provided_copy_of_form_990_to_orgs_governing_body_in_advance,:read-value read-checkbox}
    "Conflict of Interest Policy" {:field-name "conflict_of_interest_policy",:read-value read-checkbox}
    "Whistleblower Policy" {:field-name "whistleblower_policy",:read-value read-checkbox}
    "Records Retention and Destruction Policy" {:field-name "records_retention_and_destruction_policy",:read-value read-checkbox}
@@ -227,21 +233,28 @@
                      (set (concat (select is-elem "td a") (select is-elem "td strong"))))
         
         address-text (->> (find-having-text parsed "#leftnavcontent .rating strong" title)
-                       (ancestor-with-tag "p") text)
-        [_ address _ tel _ fax ein] (re-matches
-                                      (re-pattern (str title " (.*?)(tel: ([^a-z]*)\\s)??(fax: ([^a-z]*)\\s)??EIN: (.*)"))
-                                      address-text)
+                       (ancestor-with-tag "p") text (re-matches (re-pattern (str title " (.*)"))) second)
+        
+        ;[_ address & _] (re-matches
+        ;                  (re-pattern (str title ;" (.*?)(tel: ([^a-z]*)\\s)??(fax: ([^a-z]*)\\s)??(TTY: ([^a-z]*)\\s)??EIN: (.*)"
+        ;                                   ""
+        ;                                   ))
+        ;                  address-text)
+        [_ address & _] (re-matches #"(.*?) (tel:|fax:|TTY:|EIN:).*" address-text)
+        [_ tel] (re-find #"tel: ([\(\)\-0-9\s]{14})" address-text)
+        [_ fax] (re-find #"fax: ([\(\)\-0-9\s]{14})" address-text)
+        [_ tty] (re-find #"TTY: ([\(\)\-0-9\s]{14})" address-text)
+        [_ ein] (re-find #"EIN: ([\d\-]+)" address-text)
         
         ret (-> org
               (dissoc :org-cn-html)
               (assoc :title title
                      :tagline tagline
                      :website_url website_url
-                     :mission-statement mission-statement
+                     :mission_statement mission-statement
                      
-                     ;:values (concat table-values is-values)
                      :address (s/trim address)
-                     :tel tel :fax fax
+                     :tel tel :fax fax :tty tty
                      :ein ein
                      )) 
         
@@ -435,3 +448,116 @@
     (json/generate-stream (crawled-seq) out)
     ))
 
+;; ----------------------------------------------------------------
+;; MongoDB
+;; ----------------------------------------------------------------
+(def mongo-uri "mongodb://localhost:27017/sviepbd")
+(defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
+(def orgs-coll "organizations")
+(def fb-posts-coll "fb_posts")
+
+(defn fetch-orgs-docs [] (mc/find-maps orgs-coll))
+(defn oid-to-string [doc] (update-in doc [:_id] str))
+
+
+(comment 
+  ;; about 12s to read all documents from db
+  (->> (mc/find-maps orgs-coll)
+    
+    ))
+
+
+;; ----------------------------------------------------------------
+;; SQL DB
+;; ----------------------------------------------------------------
+(def sql-db {:classname "org.postgresql.Driver" 
+             :subprotocol "postgresql"
+             :subname "//localhost:5432/mydb"
+             :user "postgres"
+             :password "uzHHoabMxf0E"})
+(def orgs-table "organizations")
+(def fb-posts-table "fb_posts")
+(defmacro with-mydb [& body] `(sql/with-connection sql-db ~@body))
+
+(def organizations-keys 
+  [:_id
+   :accountability_and_transparency_rating
+   :address
+   :administrative_expenses
+   :audited_financials
+   :audited_financials_prepared_by_independent_accountant
+   :board_listed_board_members_not_compensated
+   :board_members_listed
+   :category
+   :cause
+   :ceo_listed_with_salary
+   :conflict_of_interest_policy
+   :documents_board_meeting_minutes
+   :does_not_provide_loans_to_or_receive_loans_from_related_parties
+   :donor_privacy_policy
+   :ein
+   :facebook_id
+   :fax
+   ;:fb_posts
+   :financial_rating
+   :form_990
+   :fundraising_efficiency
+   :fundraising_expenses
+   :independent_voting_board_members
+   :is_administrative_expenses
+   :is_fundraising_expenses
+   :is_net_assets
+   :is_payments_to_affiliates
+   :is_program_expenses
+   :is_total_functional_expenses
+   :is_total_revenue
+   :key_staff_listed
+   :location
+   :mission_statement
+   :no_material_diversion_of_assets
+   :org_name
+   :org_page_url
+   :overall_rating
+   :primary_revenue_growth
+   :process_for_determining_ceo_compensation
+   :program_expenses_growth
+   :provided_copy_of_form_990_to_orgs_governing_body_in_advance
+   :records_retention_and_destruction_policy
+   :result_page_url
+   :tagline
+   :tel
+   :title
+   ;:website_html
+   :website_url
+   :whistleblower_policy
+   ])
+
+(def fb-posts-keys #{:caption :created_time :description :icon :id 
+                     :link :message :name :object_id :status_type 
+                     :story :type :updated_time :_id
+                     :organization_id})
+
+(defn get-posts-doc [] (mc/find-maps fb-posts-coll))
+
+(comment
+  ;; transfer mongodb orgs to sql db
+  (->> (fetch-orgs-docs)
+    (map #(select-keys % organizations-keys))
+    (map oid-to-string)
+    (failsafe-pmap #(sql/insert-record orgs-table %))
+    dorun time
+    with-mydb
+    )
+  ;; transfer mongodb fb posts to sql db
+  (->> (get-posts-doc)
+    (map #(select-keys % fb-posts-keys))
+    (map oid-to-string)
+    (map #(-> % 
+            (update-in [:created_time] (comp tc/to-timestamp tf/parse))
+            (update-in [:updated_time] (comp tc/to-timestamp tf/parse))))
+    (failsafe-pmap #(sql/insert-record fb-posts-table %))
+    dorun time
+    with-mydb
+    )
+  
+  )

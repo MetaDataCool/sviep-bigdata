@@ -10,7 +10,8 @@
                  [cheshire "5.3.1"]; JSON encoding library for Clojure. 
                  [com.taoensso/timbre "3.1.6"]; Clojure logging and profiling library.
                  [org.clojure/java.jdbc "0.2.3"]; JDBC wrapper
-                 [mysql/mysql-connector-java "5.1.34"] ;; MySQL driver
+                 [postgresql/postgresql "9.1-901.jdbc4"]
+                 [clj-time "0.8.0"] ; A date and time library for Clojure, wrapping the Joda Time library.
                  [com.novemberain/monger "1.7.0"]; MongoDB driver.
                  [com.googlecode.htmlcompressor/htmlcompressor "1.4"][com.yahoo.platform.yui/yuicompressor "2.4.8"];; HTML minifier 
                  
