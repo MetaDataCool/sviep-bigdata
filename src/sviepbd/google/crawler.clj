@@ -18,6 +18,7 @@
             [monger.core :as mg]
             [monger.collection :as mc]
             
+            [ring.util.codec :as codec]
             [clojure.core.async :as a]
             )
   (:use clojure.repl clojure.pprint))
@@ -118,10 +119,11 @@
     (def results-block (select-one parsed-doc "#res"))
     (def results-rcs (select results-block ".g"))
     
+    (def result-html "<h3 class=\"r\"><a href=\"/url?q=http://www.independent.co.ug/the-last-word/the-last-word/7319-the-myth-of-congolese-wealth&amp;sa=U&amp;ei=88ZvVJj2Io_aiAK434HoDw&amp;ved=0CC0QFjAHOB4&amp;usg=AFQjCNGZaACJvAgxzLxMo0WugkNkLNmqdg\">The <b>myth</b> of Congolese wealth - The Independent</a></h3>\n<div class=\"s\">\n <div class=\"kv\" style=\"margin-bottom:2px\">\n  <cite>www.independent.co.ug/the.../7319-the-<b>myth</b>-of-congolese-wealth</cite>\n  <div class=\"_nBb\">\n   ‎\n   <div style=\"display:inline\" onclick=\"google.sham(this);\" aria-expanded=\"false\" aria-haspopup=\"true\" tabindex=\"0\" data-ved=\"0CC4Q7B0wBzge\">\n    <span class=\"_O0\"></span>\n   </div>\n   <div style=\"display:none\" class=\"am-dropdown-menu\" role=\"menu\" tabindex=\"-1\">\n    <ul>\n     <li class=\"_Ykb\"><a class=\"_Zkb\" href=\"/url?q=http://webcache.googleusercontent.com/search%3Fq%3Dcache:IDo-sgGQirUJ:http://www.independent.co.ug/the-last-word/the-last-word/7319-the-myth-of-congolese-wealth%252Bmining%252Bmythe%26hl%3Den%26%26ct%3Dclnk&amp;sa=U&amp;ei=88ZvVJj2Io_aiAK434HoDw&amp;ved=0CDAQIDAHOB4&amp;usg=AFQjCNHvf1CEINo7ESj72cZK0rhVxivGsw\">Cached</a></li>\n     <li class=\"_Ykb\"><a class=\"_Zkb\" href=\"/search?ie=UTF-8&amp;q=related:www.independent.co.ug/the-last-word/the-last-word/7319-the-myth-of-congolese-wealth+mining%2Bmythe&amp;tbo=1&amp;sa=X&amp;ei=88ZvVJj2Io_aiAK434HoDw&amp;ved=0CDEQHzAHOB4\">Similar</a></li>\n    </ul>\n   </div>\n  </div>\n </div>\n <span class=\"st\">Jan 25, 2013 <b>...</b> Currently, Congo's gold and tantalite in its eastern region are <b>mined</b> by small <br /> scale, individual or family based artisans using rudimentary tools&nbsp;...</span>\n <br />\n</div>")
     (def a-rc (nth results-rcs 3))
     (def rc-h3 (select-one a-rc "h3.r"))
     (def heading-text (text rc-h3))
-    (def r-link (->> (-> a-rc (select-one "a")) (attr "href") (re-matches #"/url\?q=(.*)") second))
+    (def r-link (get (->> (select-one a-rc "a") (attr "href") java.net.URI. .getQuery codec/form-decode) "q"))
     (def meta-description (-> a-rc (select-one ".st") text))
     ))
 
@@ -139,7 +141,8 @@
   [{:keys [query_terms start_index] :as page}]
   (assoc page 
          :query_result_html (-> @(http/get "http://www.google.com/search" {:query-params {"q" (s/join "+" query_terms)
-                                                                        "start" (str start_index)}})
+                                                                                          "start" (str start_index)
+                                                                                          "lr" "lang_en"}}) ;; getting the results in English only
                               :body)
          ))
 
@@ -149,20 +152,20 @@
 
 (defn get-search-results "Breaks a results page into the DOM elements that are individual results" 
   [{:keys [query_result_html], :as page}]
-  (let [parsed-doc (parse-html query-result-html)
+  (let [parsed-doc (parse-html query_result_html)
         results-block (select-one parsed-doc "#res")
-        results-rcs (select results-block ".g")])
-  (->> results-rcs 
+        results-rcs (select results-block ".g")]
+    (->> results-rcs 
     (remove is-images-result?)
     (map #(-> page (assoc :result-elem % :result_html (html %))
             (dissoc :start_index :query_result_html)))
-    ))
+    )))
 
 (defn crawl-search-result 
   [{:keys [result-elem] :as r}]
   (let [rc-h3 (select-one result-elem "h3.r")
         heading-text (text rc-h3)
-        r-link (->> (-> result-elem (select-one "a")) (attr "href") (re-matches #"/url\?q=(.*)") second)
+        r-link (get (->> (select-one rc-h3 "a") (attr "href") java.net.URI. .getQuery codec/form-decode) "q")
         meta-description (-> result-elem (select-one ".st") text)]
     (-> r 
       (assoc :heading heading-text
