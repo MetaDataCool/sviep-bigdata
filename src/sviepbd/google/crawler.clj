@@ -125,11 +125,12 @@
     (def meta-description (-> a-rc (select-one ".st") text))
     ))
 
-(def results-per-query 1000)
+(def results-per-query 10000)
 
 (defn result-pages [query]
   (let [query_terms (s/split query #"\W")
-        search {:query_terms query_terms}]
+        search {:query_terms query_terms
+                :query query}]
     (->> (range results-per-query) (take-nth 10)
       (map #(assoc search :start_index %)))
     ))
@@ -181,7 +182,7 @@
     (mapcat get-search-results)
     (map crawl-search-result)
     add-rank
-    time
+    ;time
     ))
 
 ;; ----------------------------------------------------------------
@@ -190,6 +191,11 @@
 (def mongo-uri "mongodb://localhost:27017/sviepbd")
 (defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
 
+(def results-coll "results")
 
-
+(comment
+  ;; saving all results to mongo
+  (doseq [r (crawled-results-seq "mining")]
+    (mc/save results-coll r))
+  )
 
