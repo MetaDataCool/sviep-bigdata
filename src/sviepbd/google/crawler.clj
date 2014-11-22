@@ -23,6 +23,45 @@
   (:use clojure.repl clojure.pprint))
 
 ;; ----------------------------------------------------------------
+;; Utils
+;; ----------------------------------------------------------------
+
+(def errors (atom []))
+(def errors-count (atom 0))
+(comment ;; print an errors sumamry
+  (->> @errors 
+    (map (fn [{:keys [error]}]
+           {:class (class error)
+            :stackElement (-> error .getStackTrace (aget 0))}
+           ))
+  frequencies pprint))
+
+
+(defn failsafe-map [f coll]
+  (->> coll (map #(try (f %) (catch Exception e 
+                               (do 
+                                 (log/warn (str "Problem here : " e))
+                                 ;(.printStackTrace e)
+                                 ;(swap! errors-count inc)
+                                 (swap! errors conj {:error e :item %})
+                                 nil))))
+    (filter some?)))
+(defn failsafe-pmap [f coll]
+  (->> coll (pmap #(try (f %) (catch Exception e 
+                                (do 
+                                  (log/warn (str "Problem here : " e))
+                                  ;(.printStackTrace e)
+                                  ;(swap! errors-count inc)
+                                  (swap! errors conj {:error e :item %})
+                                  nil))))
+    (filter some?)))
+
+(defn progress-logging-seq [seq]
+  (let [progress (atom 0)]
+    (map (fn [item] (log/debug (str "PROGRESS : ITEM " (swap! progress inc))) item) seq)
+    ))
+
+;; ----------------------------------------------------------------
 ;; DOM querying - facilities built atop JSoup to get more idiomatic Clojure
 ;; ----------------------------------------------------------------
 
@@ -47,6 +86,8 @@
   (->> (select root query) (filter #(= (text %) txt)) first))
 
 (defn attr [attr-name,^Element e] (.attr e attr-name))
+
+(defn html [^Element e] (.html e))
 
 (def minify-html (let [compressor (doto (HtmlCompressor.) 
                                     (.setCompressCss true)
@@ -80,13 +121,75 @@
     (def a-rc (nth results-rcs 3))
     (def rc-h3 (select-one a-rc "h3.r"))
     (def heading-text (text rc-h3))
-    (def rc-link (-> a-rc (select-one "a") (attr "href")))
+    (def r-link (->> (-> a-rc (select-one "a")) (attr "href") (re-matches #"/url\?q=(.*)") second))
+    (def meta-description (-> a-rc (select-one ".st") text))
     ))
 
-(defn fetch-result-page ""
+(def results-per-query 1000)
+
+(defn result-pages [query]
+  (let [query_terms (s/split query #"\W")
+        search {:query_terms query_terms}]
+    (->> (range results-per-query) (take-nth 10)
+      (map #(assoc search :start_index %)))
+    ))
+
+(defn fetch-result-page "Fetches a results page of the specified search at the specified page index"
   [{:keys [query_terms start_index] :as page}]
   (assoc page 
          :query_result_html (-> @(http/get "http://www.google.com/search" {:query-params {"q" (s/join "+" query_terms)
                                                                         "start" (str start_index)}})
                               :body)
          ))
+
+(defn is-images-result? "Detects if a result block is an 'images' result" 
+  [resuls-elem]
+  (-> resuls-elem (select "img") count (> 1)))
+
+(defn get-search-results "Breaks a results page into the DOM elements that are individual results" 
+  [{:keys [query_result_html], :as page}]
+  (let [parsed-doc (parse-html query-result-html)
+        results-block (select-one parsed-doc "#res")
+        results-rcs (select results-block ".g")])
+  (->> results-rcs 
+    (remove is-images-result?)
+    (map #(-> page (assoc :result-elem % :result_html (html %))
+            (dissoc :start_index :query_result_html)))
+    ))
+
+(defn crawl-search-result 
+  [{:keys [result-elem] :as r}]
+  (let [rc-h3 (select-one result-elem "h3.r")
+        heading-text (text rc-h3)
+        r-link (->> (-> result-elem (select-one "a")) (attr "href") (re-matches #"/url\?q=(.*)") second)
+        meta-description (-> result-elem (select-one ".st") text)]
+    (-> r 
+      (assoc :heading heading-text
+             :link r-link
+             :meta_description meta-description)
+      (dissoc :result-elem)
+      )))
+
+(defn add-rank [s]
+  (let [index (atom -1)]
+    (map (fn [e] (let [i (swap! index inc)] (assoc e :rank i))) s)))
+
+(defn crawled-results-seq "Returns the crawled results corresponding to the query as a lazy sequence"
+  [^String query]
+  (->> (result-pages query)
+    (failsafe-pmap fetch-result-page) 
+    (mapcat get-search-results)
+    (map crawl-search-result)
+    add-rank
+    time
+    ))
+
+;; ----------------------------------------------------------------
+;; MongoDB
+;; ----------------------------------------------------------------
+(def mongo-uri "mongodb://localhost:27017/sviepbd")
+(defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
+
+
+
+
