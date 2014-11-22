@@ -16,6 +16,9 @@
                  [com.novemberain/monger "1.7.0"]; MongoDB driver.
                  [com.googlecode.htmlcompressor/htmlcompressor "1.4"][com.yahoo.platform.yui/yuicompressor "2.4.8"];; HTML minifier 
                  
+                 ;; Stanford CoreNLP
+                 [edu.stanford.nlp/stanford-corenlp "3.5.0"] ;; A Suite of Core Natural Language Processing Tools
+                 [edu.stanford.nlp/stanford-corenlp "3.5.0" :classifier "models"]
                  ]
   :main ^:skip-aot sviepbd.core
   :target-path "target/%s"
