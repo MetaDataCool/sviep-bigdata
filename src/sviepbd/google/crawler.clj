@@ -192,7 +192,7 @@
 (defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
 
 (def results-coll "results")
-
+(defn get-results [] (mc/find-maps results-coll))
 (comment
   ;; saving all results to mongo
   (doseq [r (crawled-results-seq "mining")]
