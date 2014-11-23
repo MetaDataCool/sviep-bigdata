@@ -19,6 +19,10 @@
                  ;; Stanford CoreNLP
                  [edu.stanford.nlp/stanford-corenlp "3.5.0"] ;; A Suite of Core Natural Language Processing Tools
                  [edu.stanford.nlp/stanford-corenlp "3.5.0" :classifier "models"]
+                 
+                 
+                 [org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.
+                 [korma "0.3.0-RC5"]; Korma : Clojure DSL for RDBMS.
                  ]
   :main ^:skip-aot sviepbd.core
   :target-path "target/%s"
