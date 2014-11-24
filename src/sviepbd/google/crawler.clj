@@ -21,7 +21,7 @@
             [korma.core :as k]
             
             [ring.util.codec :as codec]
-            ;[clojure.core.async :as a]
+            [clojure.core.async :as a]
             )
   (:use clojure.repl clojure.pprint))
 
@@ -51,6 +51,22 @@
   (let [progress (atom 0)]
     (map (fn [item] (log/debug (str "PROGRESS : ITEM " (swap! progress inc))) item) seq)
     ))
+
+(defn- seq-of-chan "Creates a lazy seq from a core.async channel." [c]
+  (lazy-seq
+    (let [fst (a/<!! c)]
+      (if (nil? fst) nil (cons fst (lazy-seq (seq-of-chan c))) ))))
+
+(defn map-pipeline-async "From an asynchronous function af, and a seq coll, creates a lazy seq that is the result of applying the asynchronous function af to each element of coll.
+af must be an asyncronous function as described in clojure.core.async/pipeline-async.
+takes an optional p parallelism number."
+  ([af p coll]
+    (let [ic (a/chan p), oc (a/chan p)]
+      (a/onto-chan ic coll)
+      (a/pipeline-async p oc af ic)
+      (seq-of-chan oc)
+      ))
+  ([af coll] (map-pipeline-async af 200 coll)))
 
 ;; ----------------------------------------------------------------
 ;; DOM querying - facilities built atop JSoup to get more idiomatic Clojure
@@ -159,6 +175,17 @@
              :meta_description meta-description)
       (dissoc :result-elem)
       )))
+
+(defn fetch-website "Fetches the HTML of the website of the result." 
+  [{:keys [link] :as r}]
+  (assoc r :website_html (-> @(http/get link) :body minify-html)))
+
+(defn fetch-website-a "Fetches the HTML of the website of the result; meant to be called with pipeline-async" 
+  [{:keys [link] :as r} ch]
+  (http/get link (fn [resp]  
+                   (->> resp :body minify-html (assoc r :website_html) (a/>!! ch))
+                   (a/close! ch)))
+  )
 
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
   [s] (map (fn [i item] (assoc item :rank i)) (range) s))
