@@ -17,4 +17,6 @@ pom.xml.asc
 #*#
 
 resources/data.db
+resources/mongo_data
+resources/results.json
 

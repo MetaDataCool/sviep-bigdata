@@ -169,7 +169,6 @@
     (failsafe-pmap fetch-result-page) 
     (mapcat get-search-results)
     (failsafe-map crawl-search-result)
-    add-rank
     ;time
     ))
 
