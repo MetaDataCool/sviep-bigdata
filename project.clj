@@ -25,5 +25,6 @@
                  [korma "0.3.0-RC5"]; Korma : Clojure DSL for RDBMS.
                  ]
   :main ^:skip-aot sviepbd.core
+  :repl-options {:init-ns sviepbd.google.crawler}
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})

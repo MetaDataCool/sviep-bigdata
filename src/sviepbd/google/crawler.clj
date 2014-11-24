@@ -55,7 +55,7 @@
 (defn- seq-of-chan "Creates a lazy seq from a core.async channel." [c]
   (lazy-seq
     (let [fst (a/<!! c)]
-      (if (nil? fst) nil (cons fst (lazy-seq (seq-of-chan c))) ))))
+      (if (nil? fst) nil (cons fst (seq-of-chan c)) ))))
 
 (defn map-pipeline-async "From an asynchronous function af, and a seq coll, creates a lazy seq that is the result of applying the asynchronous function af to each element of coll.
 af must be an asyncronous function as described in clojure.core.async/pipeline-async.
@@ -240,3 +240,17 @@ takes an optional p parallelism number."
                    ))
   )
 (def save-result-to-sqlite! #(k/insert result-ent (k/values %)))
+
+;; ----------------------------------------------------------------
+;; Scripts
+;; ----------------------------------------------------------------
+
+(defn perform-scraping! []
+  (log/info "Connecting to MongoDB...")
+  (connect-mongo!)
+  (log/info "Starting to scrape...")
+  (->> (crawled-results-seq "mining")
+    (failsafe-map save-result!)
+    progress-logging-seq dorun time)
+  (log/info "done scraping.")
+  )
