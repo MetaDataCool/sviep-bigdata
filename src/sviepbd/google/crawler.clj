@@ -130,18 +130,21 @@
          ))
 
 (defn- is-images-result? "Detects if a result block is an 'images' result" 
-  [resuls-elem]
-  (-> resuls-elem (select "img") count (> 1)))
+  [{:keys [result-elem]}]
+  (-> result-elem (select "img") count (> 1)))
 
 (defn get-search-results "Breaks a results page into the DOM elements that are individual results" 
-  [{:keys [query_result_html], :as page}]
+  [{:keys [query_result_html start_index], :as page}]
   (let [parsed-doc (parse-html query_result_html)
         results-block (select-one parsed-doc "#res")
         results-rcs (select results-block ".g")]
     (->> results-rcs 
-    (remove is-images-result?)
-    (map #(-> page (assoc :result-elem % :result_html (html %))
-            (dissoc :start_index :query_result_html)))
+      (map (fn [idx r] 
+             (-> page 
+               (assoc :rank (+ start_index idx),:result-elem r,:result_html (html r))
+               (dissoc :start_index :query_result_html))
+             ) (range))
+      (remove is-images-result?)
     )))
 
 (defn crawl-search-result "Performs scraping of a search result element. Extracts heading text, link URL and meta-description."
