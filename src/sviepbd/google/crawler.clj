@@ -125,7 +125,7 @@ takes an optional p parallelism number."
     (def meta-description (-> a-rc (select-one ".st") text))
     ))
 
-(def results-per-query  "How many results get crawled for a query." 10000)
+(def results-per-query  "How many results get crawled for a query." 3000)
 
 (defn- result-pages "Creates a lazy seq of the pages to fetch for a given query (given that each page contains 10 results)"
   [^String query]

@@ -18,3 +18,17 @@ Then, to launch the program you need to launch with a REPL project.cli
 Then in the command  line type : (perform-scraping!)
 
 Results will be put in the mongo db "sviep" in the collection "results"
+
+To copy to SQLIte the results
+do (connect-mongo!) in REPL
+
+
+to create the db table in sqlite3:
+
+(create-results-table!) 
+
+to save the results to sqlite3:
+
+(->>(get-results)
+  (map save-result-to-sqlite!)
+  dorun)
