@@ -239,10 +239,18 @@ takes an optional p parallelism number."
 (defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
 (comment (connect-mongo!))
 
-(def results-coll "results")
+(def results-coll "MongoDB collection of 9000 results - some in French - with approximate ranking." 
+  "results")
 (defn get-results [] (mc/find-maps results-coll))
 (def save-result! #(mc/save results-coll %))
+
 (def dissoc-_id #(dissoc % :_id))
+(defn get-complete-results [] (mc/find-maps complete-results-coll))
+(def save-complete-result! #(mc/save complete-results-coll %))
+
+(def complete-results-coll "MongoDB collection of 421 results with their website's HTML fetched"
+  "results_complete")
+
 
 (comment
   ;; saving all results to mongo
