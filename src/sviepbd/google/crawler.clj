@@ -57,7 +57,9 @@
     (let [fst (a/<!! c)]
       (if (nil? fst) nil (cons fst (seq-of-chan c)) ))))
 
-(defn map-pipeline-async "From an asynchronous function af, and a seq coll, creates a lazy seq that is the result of applying the asynchronous function af to each element of coll.
+(defn map-pipeline-async "Map for asynchronous functions, backed by clojure.core.async/pipeline-async .
+
+From an asynchronous function af, and a seq coll, creates a lazy seq that is the result of applying the asynchronous function af to each element of coll.
 af must be an asyncronous function as described in clojure.core.async/pipeline-async.
 takes an optional p parallelism number."
   ([af p coll]
@@ -210,7 +212,7 @@ takes an optional p parallelism number."
 (defn fetch-website-a "Fetches the HTML of the website of the result; meant to be called with pipeline-async" 
   [{:keys [link] :as r} ch]
   (http/get link (fn [resp] 
-                   (>!!-and-close! ch (add-website resp))
+                   (>!!-and-close! ch (add-website r resp))
                    )))
 
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
