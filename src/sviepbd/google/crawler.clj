@@ -68,6 +68,11 @@ takes an optional p parallelism number."
       ))
   ([af coll] (map-pipeline-async af 200 coll)))
 
+(defn- >!!-and-close! "Puts a value into a channel if its not nil, then closes the channel."
+  [port v]
+  (when (some? v) (a/>!! port v))
+  (a/close! port))
+
 ;; ----------------------------------------------------------------
 ;; DOM querying - facilities built atop JSoup to get more idiomatic Clojure
 ;; ----------------------------------------------------------------
@@ -125,7 +130,7 @@ takes an optional p parallelism number."
     (def meta-description (-> a-rc (select-one ".st") text))
     ))
 
-(def results-per-query  "How many results get crawled for a query." 10000)
+(def results-per-query  "How many results get crawled for a query." 500)
 
 (defn- result-pages "Creates a lazy seq of the pages to fetch for a given query (given that each page contains 10 results)"
   [^String query]
@@ -136,14 +141,25 @@ takes an optional p parallelism number."
       (map #(assoc search :start_index %)))
     ))
 
+(defn- result-page-request-opts [{:keys [query_terms start_index] :as page}]
+  {:query-params {"q" (s/join "+" query_terms)
+                  "start" (str start_index)
+                  "lr" "lang_en"}})
+
 (defn fetch-result-page "Fetches a results page of the specified search at the specified page index"
   [{:keys [query_terms start_index] :as page}]
   (assoc page 
-         :query_result_html (-> @(http/get "http://www.google.com/search" {:query-params {"q" (s/join "+" query_terms)
-                                                                                          "start" (str start_index)
-                                                                                          "lr" "lang_en"}}) ;; getting the results in English only
+         :query_result_html (-> @(http/get "http://www.google.com/search" (result-page-request-opts page)) ;; getting the results in English only
                               :body)
          ))
+(defn fetch-result-page-a "Asynchronous version of fetch-result-page"
+  [page ch]
+  (http/get "http://www.google.com/search" (result-page-request-opts page) 
+            (fn [resp] 
+              (>!!-and-close! 
+                ch (assoc page :query_result_html (resp :body)) 
+                ))
+            ))
 
 (defn- is-images-result? "Detects if a result block is an 'images' result" 
   [{:keys [result-elem]}]
@@ -176,19 +192,34 @@ takes an optional p parallelism number."
       (dissoc :result-elem)
       )))
 
+;; ----------------------------------------------------------------
+;; Target website fetching
+;; ----------------------------------------------------------------
+
+(defn- add-website "From a result map and the HTTP response of fetching the result's website, assoc's the website HTML to the result it the response is well-formed; otherwise returns the raw result." 
+  [r,{{:keys [content-type]} :headers, body :body :as resp}]
+  (cond-> r 
+          (and content-type (.startsWith content-type "text/html") (string? body)) ;; tests that response is html
+          (assoc :website_html (->> body minify-html))
+          ))
+
 (defn fetch-website "Fetches the HTML of the website of the result." 
   [{:keys [link] :as r}]
-  (assoc r :website_html (-> @(http/get link) :body minify-html)))
+  (cond-> r link (add-website @(http/get link))))
 
 (defn fetch-website-a "Fetches the HTML of the website of the result; meant to be called with pipeline-async" 
   [{:keys [link] :as r} ch]
-  (http/get link (fn [resp]  
-                   (->> resp :body minify-html (assoc r :website_html) (a/>!! ch))
-                   (a/close! ch)))
-  )
+  (http/get link (fn [resp] 
+                   (>!!-and-close! ch (add-website resp))
+                   )))
 
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
   [s] (map (fn [i item] (assoc item :rank i)) (range) s))
+
+
+;; ----------------------------------------------------------------
+;; Total sequence
+;; ----------------------------------------------------------------
 
 (defn crawled-results-seq "Returns the crawled results corresponding to the query as a lazy sequence"
   [^String query]
@@ -231,7 +262,7 @@ takes an optional p parallelism number."
       [:meta_description :varchar]
       [:rank :integer]
       [:query :varchar]
-                      )))
+      )))
 (defn drop-results-table! [] (sql/with-connection sqlite-connection (sql/drop-table :results)))
 
 (k/defentity result-ent
