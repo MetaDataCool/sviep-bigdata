@@ -7,9 +7,11 @@
            [org.jsoup.select Elements]
            )
   (:require [org.httpkit.client :as http]
+            [clojure.core.async :as a]
             [clojure.string :as s]
             [taoensso.timbre :as log]
             [cheshire.core :as json]
+            [ring.util.codec :as codec]
             [clojure.java.io :as io]
             [clj-time.core :as time]
             [clj-time.format :as tf]
@@ -20,8 +22,7 @@
             [korma.db :as db]
             [korma.core :as k]
             
-            [ring.util.codec :as codec]
-            [clojure.core.async :as a]
+            [sviepbd.utils.nlp :as nlpu]
             )
   (:use clojure.repl clojure.pprint))
 
@@ -218,6 +219,63 @@ takes an optional p parallelism number."
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
   [s] (map (fn [i item] (assoc item :rank i)) (range) s))
 
+;; ----------------------------------------------------------------
+;; Tokenization
+;; ----------------------------------------------------------------
+
+(comment ;; tokenization sandbox
+  (do 
+    (def wikipedia-text (-> @(http/get "http://en.wikipedia.org/wiki/Mining") :body  parse-html text))
+    (def wikipedia-tokens (->> wikipedia-text tokenize-simple))
+    (def wikipedia-bag (reduce-to-bag-of-words wikipedia-tokens))
+    (def wikipedia-seq-bag (to-seq-BoW wikipedia-bag))
+    ))
+
+(defn- tokenize-simple "Tokenizes a text in a way that keeps (mostly) only words tokens, with lowercased lemmas."
+  [text]
+  (->> text nlpu/tokenize 
+    (remove nlpu/non-word-token?) ;; removing symbols etc.
+    (map nlpu/lowercase-lemma) ;; putting all lemmas to lower-case
+    (remove nlpu/stopword-token?) ;; removing stopwords ("the", "a" "be", ...)
+    ))
+
+;; weights of the tokens found in the various fields.
+(def ^:dynamic weight-heading 1)
+(def ^:dynamic weight-meta_description 1)
+(def ^:dynamic weight-website-content 1)
+
+(defn- reduce-to-bag-of-words "Reduces a sequence of token-maps that have a :lemma and an (optional) :weight properties into a Bag-Of-Words representation." 
+  [tokens]
+  (->> tokens
+    (reduce (fn [res {:keys [lemma weight]}] (assoc! res lemma (+ (get res lemma 0) (or weight 1.0)))) 
+            (transient {}))
+    persistent!)
+  )
+
+(defn- normalize-BoW [bag]
+  (let [total (->> bag vals (reduce + 0) (* 1.0))]
+    (if (> total 0)
+      (persistent!
+        (reduce (fn [b k] (assoc! b k (/ (b k) total))) 
+          (transient bag) (keys bag)))
+      bag)))
+
+(defn- to-seq-BoW "From a map Bag-of-Words representation, creates a sequential representation, 
+that is a seq of maps with :lemma and :weight properties."
+  [bag]
+  (map (fn [[word weight]] {:word word :weight weight}) bag))
+
+(defn tokenize-result 
+  [{:keys [heading meta_description website_html] :as r}]
+  (let [weighted-tokens 
+        (cond-> 
+          ()
+          heading (concat (->> heading tokenize-simple (map #(assoc % :weight weight-heading))))
+          meta_description (concat (->> meta_description tokenize-simple (map #(assoc % :weight weight-meta_description))))
+          website_html (concat (->> website_html parse-html text tokenize-simple (map #(assoc % :weight weight-website-content))))
+          )]
+    (assoc r :tokens_bag (-> weighted-tokens reduce-to-bag-of-words to-seq-BoW)))
+  )
 
 ;; ----------------------------------------------------------------
 ;; Total sequence
@@ -229,6 +287,11 @@ takes an optional p parallelism number."
     (failsafe-pmap fetch-result-page) 
     (mapcat get-search-results)
     (failsafe-map crawl-search-result)
+    
+    ;(map-pipeline-async fetch-website-a)
+    
+    ;(pmap tokenize-result)
+    
     ;time
     ))
 
@@ -245,12 +308,11 @@ takes an optional p parallelism number."
 (def save-result! #(mc/save results-coll %))
 
 (def dissoc-_id #(dissoc % :_id))
-(defn get-complete-results [] (mc/find-maps complete-results-coll))
-(def save-complete-result! #(mc/save complete-results-coll %))
 
 (def complete-results-coll "MongoDB collection of 421 results with their website's HTML fetched"
   "results_complete")
-
+(defn get-complete-results [] (mc/find-maps complete-results-coll))
+(def save-complete-result! #(mc/save complete-results-coll %))
 
 (comment
   ;; saving all results to mongo
