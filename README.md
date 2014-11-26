@@ -47,4 +47,6 @@ mongorestore --db sviepbd path/to/results_exports/sviepbd
 
 that will copy into your mongo instance the tokenized collections
 
+tokenized means:"tokens_bag" key; it's an array of {"word": <word>, "weight": <number>}
+
 
