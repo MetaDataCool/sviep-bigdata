@@ -465,6 +465,10 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
       dorun
       time
      ))
+  
+  ;;exporting 
+  (export-matrices! {:matrix-file "few-results_matrix.csv"
+                     :dictionary-file "few-results_words.csv"})
   )
 
 ;; ----------------------------------------------------------------
