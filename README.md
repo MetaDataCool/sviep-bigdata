@@ -50,3 +50,8 @@ that will copy into your mongo instance the tokenized collections
 tokenized means:"tokens_bag" key; it's an array of {"word": <word>, "weight": <number>}
 
 
+Then the Python part:
+
+main.py can be run and right now only import pymongo package to connect to the mongodb from python
+
+
