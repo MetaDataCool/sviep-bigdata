@@ -21,6 +21,7 @@
             [clojure.java.jdbc :as sql]
             [korma.db :as db]
             [korma.core :as k]
+            [clojure.data.csv :as csv]
             
             [sviepbd.utils.nlp :as nlpu]
             )
@@ -48,10 +49,12 @@
     (filter some?)))
 
 (defn progress-logging-seq "Transforms a seq into a lazy seq with the same elements, but that logs its progression as it gets evaluated."
-  [seq]
-  (let [progress (atom 0)]
-    (map (fn [item] (log/debug (str "PROGRESS : ITEM " (swap! progress inc))) item) seq)
-    ))
+  ([step seq] (map (fn [i item] (when (-> i (mod step) (= 0)) 
+                                  (log/debug (str "PROGRESS : ITEM " i))) 
+                     item) 
+                   (range) seq))
+  ([seq] (progress-logging-seq 1 seq))
+  )
 
 (defn- seq-of-chan "Creates a lazy seq from a core.async channel." [c]
   (lazy-seq
@@ -323,26 +326,146 @@ that is a seq of maps with :lemma and :weight properties."
 ;; ----------------------------------------------------------------
 ;; SQLite
 ;; ----------------------------------------------------------------
-(def sqlite-connection (db/sqlite3 {:db (-> "data.db" io/resource .getPath)}))
+(def sqlite-connection 
+  (db/sqlite3 {:db (-> "data.db" io/resource .getPath)})
+  ;(db/h2 {:db (-> "datah2.db" io/resource .getPath)})
+  )
 (db/defdb sqlite-db sqlite-connection) ;; connects to SQLite database which file is resources/data.db (unversioned)
+(def sqlite-pool @(:pool sqlite-db))
+
+(def results-table "results")
+(def words-table "words")
+(def bow-table "bags_of_words")
+
 (defn create-results-table! []
-  (sql/with-connection sqlite-connection
-    (sql/create-table 
-      :results
-      [:id :integer "PRIMARY KEY" "AUTOINCREMENT"]
-      [:heading :varchar]
-      [:meta_description :varchar]
-      [:rank :integer]
-      [:query :varchar]
-      )))
-(defn drop-results-table! [] (sql/with-connection sqlite-connection (sql/drop-table :results)))
+  (sql/db-do-commands sqlite-pool 
+                      (sql/create-table-ddl
+                        :results
+                        [:id :integer "PRIMARY KEY" "AUTOINCREMENT"]
+                        [:heading :varchar]
+                        [:meta_description :varchar]
+                        [:rank :integer]
+                        [:query :varchar]
+                        )))
+(defn drop-results-table! [] 
+  (sql/db-do-commands sqlite-pool (sql/drop-table-ddl :results)))
+
+(defn create-words-table! []
+  (sql/db-do-commands sqlite-pool 
+                      (sql/create-table-ddl
+                        :words
+                        [:id :integer "PRIMARY KEY" "AUTOINCREMENT"]
+                        [:word :varchar "UNIQUE"]
+                        )))
+(defn drop-words-table! [] 
+  (sql/db-do-commands sqlite-pool (sql/drop-table-ddl :words)))
+
+(declare result-ent word bags_of_words)
 
 (k/defentity result-ent
-  (k/table "results")
+  (k/table results-table)
   (k/prepare (comp #(select-keys % [:heading :meta_description :rank :query])
                    ))
+  (k/many-to-many word bow-table)
   )
 (def save-result-to-sqlite! #(k/insert result-ent (k/values %)))
+
+(k/defentity word
+  (k/table words-table)
+  (k/prepare (comp #(select-keys % [:word])
+                   ))
+  (k/many-to-many result-ent bow-table)
+  )
+(defn save-words! [{:keys [word]} & [con]]
+  (sql/execute! (or con sqlite-pool) ["INSERT OR IGNORE INTO \"words\" (\"word\") VALUES (?);" word]))
+
+;; a table to use as a sparse matrix reprensentation.
+(defn create-bow-table! []
+  (sql/db-do-commands sqlite-pool
+                      (sql/create-table-ddl
+                        bow-table
+                        [:result_id :integer]
+                        [:word :varchar]
+                        [:weight :double]
+                        )))
+(defn drop-bow-table! [] (sql/db-do-commands sqlite-pool (sql/drop-table-ddl bow-table)))
+(k/defentity bags_of_words
+  (k/table bow-table)
+  (k/prepare (comp #(select-keys [:word :weight]))
+             )
+  )
+
+(defn export-matrices! [{:keys [matrix-file, dictionary-file 
+                                bow-table-name, words-table-name] 
+                         :or {matrix-file "words_matrix.csv", dictionary-file "dictionary.csv"
+                              bow-table-name bow-table, words-table-name words-table}}]
+  ;; printing bags-of-words table
+  (log/info (str "Exporting the bags of words as sparse matrix into " 
+                 (.getAbsolutePath (io/as-file matrix-file)) 
+                 "..."))
+  (with-open [wtr (io/writer matrix-file :append false)] 
+    (csv/write-csv wtr 
+      (rest (sql/query sqlite-pool
+                       [(format "
+SELECT result_id,id,weight
+FROM %s AS bows
+JOIN %s AS ws
+WHERE bows.word=ws.word;" bow-table-name words-table-name) 
+                        ]
+                       :as-arrays? true
+                 ))
+      :separator \tab
+      ))
+  (log/info (str "Exported a matrix of "
+                 (-> (sql/query sqlite-pool 
+                                [(format "SELECT COUNT(DISTINCT result_id) AS count FROM %s ;" bow-table-name)]) first :count) " results"
+                 " x "
+                 (-> (sql/query sqlite-pool 
+                                [(format "SELECT COUNT(*) AS count FROM %s ;" words-table-name)]) first :count) " words"
+                 ))
+  
+  ;; printing words table
+  (log/info (str "Exporting the words table into " 
+                 (.getAbsolutePath (io/as-file dictionary-file)) 
+                 "..."))
+  (with-open [wtr (io/writer dictionary-file :append false)] 
+    (csv/write-csv wtr 
+                   (rest (sql/query sqlite-pool "SELECT id,word FROM words"
+                                    :as-arrays? true
+                                    ))
+                   :separator \tab
+                   ))
+  
+  )
+
+(comment ;; how to get sparse matrix representations
+  (k/delete word)
+  (k/delete bags_of_words)
+  
+  ;; start with putting all the words in the database
+  (sql/with-db-transaction [con sqlite-connection]
+    (->> (get-complete-results)
+      (progress-logging-seq 10)
+      (mapcat :tokens_bag)
+      (map #(save-words! % con))
+      dorun
+      time
+     ))
+  
+  ;; storing tokenization in bags_of_words table
+  (sql/with-db-transaction [con sqlite-connection]
+    (->> (get-complete-results)
+      (progress-logging-seq 10)
+      (map (fn [i r] (assoc r :result_id i)) (range))
+      (mapcat (fn [{:keys [tokens_bag result_id]}] 
+                (->> tokens_bag (map #(assoc % :result_id result_id)))
+                ))
+      (map #(select-keys % [:word :weight :result_id]))
+      (map #(sql/insert! con bow-table %))
+      dorun
+      time
+     ))
+  )
 
 ;; ----------------------------------------------------------------
 ;; Scripts
