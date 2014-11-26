@@ -52,9 +52,13 @@ tokenized means:"tokens_bag" key; it's an array of {"word": <word>, "weight": <n
 
 Then the Python part:
 
+you need to have python, an environment where you can run it, the packages pymongo and sklearn.
+
 main.py can be run and right now does
 
- -imports pymongo package to connect to the mongodb from python
- -print the first bag of words 
+ - imports pymongo package to connect to the mongodb from python
+ - print the first bag of words 
+
+ - (then uses http://scikit-learn.org/stable/modules/feature_extraction.html to create the (i,j) val() matrix)
 
 
