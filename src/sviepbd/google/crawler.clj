@@ -234,12 +234,19 @@ takes an optional p parallelism number."
     (def wikipedia-seq-bag (to-seq-BoW wikipedia-bag))
     ))
 
+(defn- only-alpha? "Checks if a token contains only alphabet characters" 
+  [{:keys [lemma]}] (re-matches #"[a-z]*" lemma))
+(defn- too-short? 
+  [{:keys [lemma]}] (-> (count lemma) (< 3)))
+
 (defn- tokenize-simple "Tokenizes a text in a way that keeps (mostly) only words tokens, with lowercased lemmas."
   [text]
   (->> text nlpu/tokenize 
     (remove nlpu/non-word-token?) ;; removing symbols etc.
     (map nlpu/lowercase-lemma) ;; putting all lemmas to lower-case
+    (filter only-alpha?)
     (remove nlpu/stopword-token?) ;; removing stopwords ("the", "a" "be", ...)
+    (remove too-short?)
     ))
 
 ;; weights of the tokens found in the various fields.
@@ -439,6 +446,7 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
   )
 
 (comment ;; how to get sparse matrix representations
+  ;; clean SQL database
   (k/delete word)
   (k/delete bags_of_words)
   
