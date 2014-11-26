@@ -52,6 +52,9 @@ tokenized means:"tokens_bag" key; it's an array of {"word": <word>, "weight": <n
 
 Then the Python part:
 
-main.py can be run and right now only import pymongo package to connect to the mongodb from python
+main.py can be run and right now does
+
+ -imports pymongo package to connect to the mongodb from python
+ -print the first bag of words 
 
 
