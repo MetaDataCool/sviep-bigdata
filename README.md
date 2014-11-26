@@ -7,7 +7,7 @@ Tips for running this:
 You will need the Java Dev environment set up,
 as well as a Clojure environment that you can download on Mac with homebrew: brew install leiningen
 
-To launche the program you need to launch with a REPL project.cli
+To launch the program you need to launch with a REPL project.cli
 
 Then in the command
 
@@ -32,3 +32,19 @@ to save the results to sqlite3:
 (->>(get-results)
   (map save-result-to-sqlite!)
   dorun)
+
+
+To copy the entire pre-tokenized mongo db of 
+
+ - "results" : 9000 results, some in French with approximate ranking; the target websites have not been scraped. Tokenized.
+- "results2": 548 results, only in English and with exact ranking (not very useful).
+- "results_complete": 421 results documents (those of the above which websites have been fetched successfully). Tokenized.
+
+that is in /results_exports into your mongodb
+be sure to have your instance of mongod up and running and then do
+
+mongorestore --db sviepbd path/to/results_exports/sviepbd
+
+that will copy into your mongo instance the tokenized collections
+
+
