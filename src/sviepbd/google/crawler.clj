@@ -330,7 +330,7 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
                         ]
                        :as-arrays? true
                  ))
-      :separator \tab
+      :separator \space
       ))
   (log/info (str "Exported a matrix of "
                  (-> (sql/query sqlite-pool 
@@ -349,15 +349,19 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
                    (rest (sql/query sqlite-pool "SELECT id,word FROM words"
                                     :as-arrays? true
                                     ))
-                   :separator \tab
+                   :separator \space
                    ))
   
   )
 
 (comment ;; how to get sparse matrix representations
   ;; clean SQL database
-  (k/delete word)
-  (k/delete bags_of_words)
+  (do 
+    (drop-words-table!)
+    (drop-bow-table!)
+  
+    (create-words-table!)
+    (create-bow-table!))
   
   ;; start with putting all the words in the database
   (sql/with-db-transaction [con sqlite-connection]
