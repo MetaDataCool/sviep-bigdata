@@ -270,7 +270,7 @@ that is a seq of maps with :lemma and :weight properties."
   (sql/db-do-commands sqlite-pool 
                       (sql/create-table-ddl
                         :words
-                        [:id :integer "PRIMARY KEY" "AUTOINCREMENT"]
+                        [:id :integer]
                         [:word :varchar "UNIQUE"]
                         )))
 (defn drop-words-table! [] 
@@ -288,7 +288,7 @@ that is a seq of maps with :lemma and :weight properties."
 
 (k/defentity word
   (k/table words-table)
-  (k/prepare (comp #(select-keys % [:word])
+  (k/prepare (comp #(select-keys % [:word :id])
                    ))
   (k/many-to-many result-ent bow-table)
   )
@@ -372,6 +372,13 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
       dorun
       time
      ))
+  ;; adding word ids
+  (->> (k/select word)
+    (map (fn [i w] (assoc w :id i)) (range))
+    (map #(k/update word (k/set-fields {:id (% :id)}) (k/where {:word (% :word)})))
+    (progress-logging-seq 500)
+    dorun time
+    )
   
   ;; storing tokenization in bags_of_words table
   (sql/with-db-transaction [con sqlite-connection]
@@ -388,8 +395,8 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
      ))
   
   ;;exporting 
-  (export-matrices! {:matrix-file "few-results_matrix.csv"
-                     :dictionary-file "few-results_words.csv"})
+  (export-matrices! {:matrix-file "unversioned/sparse_matrices/few-results_matrix.csv"
+                     :dictionary-file "unversioned/sparse_matrices/few-results_words.csv"})
   )
 
 ;; ----------------------------------------------------------------
