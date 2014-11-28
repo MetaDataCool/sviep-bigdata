@@ -397,6 +397,9 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
   ;;exporting 
   (export-matrices! {:matrix-file "unversioned/sparse_matrices/few-results_matrix.csv"
                      :dictionary-file "unversioned/sparse_matrices/few-results_words.csv"})
+  ;; - or -
+  (export-matrices! {:matrix-file "unversioned/sparse_matrices/many-results_matrix.csv"
+                     :dictionary-file "unversioned/sparse_matrices/many-results_words.csv"})
   )
 
 ;; ----------------------------------------------------------------
