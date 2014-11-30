@@ -23,12 +23,14 @@
                  
                  [net.mikera/core.matrix "0.31.1"] ;; Clojure matrix specification
                  [clatrix "0.4.0"] ;; native implementation of matrices using JBLAS
-                 [org.la4j/la4j "0.4.9"] ;; Java LA library with sparse matrix support
+                 ;[org.la4j/la4j "0.4.9"] ;; Java LA library with sparse matrix support
                  
                  [org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.
                  [com.h2database/h2 "1.3.170"] ;; H2
                  [korma "0.3.0"]; Korma : Clojure DSL for RDBMS.
                  ]
+  :source-paths ["src"]
+  :java-source-paths ["javasrc"]
   :main ^:skip-aot sviepbd.core
   :repl-options {:init-ns sviepbd.google.crawler}
   :target-path "target/%s"

@@ -3,7 +3,7 @@
            [org.la4j LinearAlgebra]
            [org.la4j.matrix Matrix Matrices]
            [org.la4j.matrix.functor MatrixProcedure]
-           [org.la4j.matrix.sparse CRSMatrix CCSMatrix]
+           [org.la4j.matrix.sparse CRSMatrix CCSMatrix SparseMatrix]
            [org.la4j.factory Factory CRSFactory CCSFactory]
            [org.la4j.vector Vector]
            [org.la4j.vector.functor VectorProcedure]
@@ -238,6 +238,25 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
       ))
   )
 
+(defn- m+sm [^Matrix m1, ^Matrix m2]
+  (let [d (.copy m1)]
+    (each-non-zero-m! m2 [i j m2ij] (.set d i j (+ (double (.get d i j)) (double m2ij))))
+    d))
+
+(defn- m-sm [^Matrix m1, ^Matrix m2]
+  (let [d (.copy m1)]
+    (each-non-zero-m! m2 [i j m2ij] (.set d i j (- (double (.get d i j)) (double m2ij))))
+    d))
+
+(defn- sv-o*-sv [^Vector v1, ^Vector v2]
+  (let [^Matrix ret (create-matrix (.factory v1) (length v1) (length v2))]
+    (each-non-zero-v! 
+      v1 [i v1i]
+      (each-non-zero-v!
+        v2 [j v2j]
+        (.set ret (int i) (int j) (* (double v1i) (double v2j)))))
+    ret))
+
 (defn get-sparse-components [m {:keys [iterations 
                                        init-vector stop-epsilon p-threshold q-threshold] :as config}]
   (pr/p :get-sparse-component-total 
@@ -247,15 +266,15 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
                              (fn [{:keys [rem approx-m initial-matrix] :as previous} i]
                                (log/debug (str "Iteration : " i))
                                (let [{:keys [p q] :as pi-res} (pr/p :power-itr (power-iteration rem config))
-                                     component (pr/p :op1 (*mm (to-column-matrix q) (to-row-matrix p)))
-                                     new-approx (pr/p :op2 (+mm approx-m component))
-                                     ]
+                                     component (pr/p :op1  (sv-o*-sv q p) #_(*mm (to-column-matrix q) (to-row-matrix p)))
+                                     new-approx (pr/p :op2 (m+sm #_+mm approx-m component))
+                                     new-rem (pr/p :op3 (m-sm #_subtract rem component))]
                                  (-> previous 
                                    (merge pi-res) 
-                                   (assoc :rem (pr/p :op3 (subtract rem component))
+                                   (assoc :rem new-rem
                                           :component component
                                           :approx-m new-approx
-                                          :relative-error (pr/p :op4 (/ (frobenius-norm new-approx) norm-m)))
+                                          :relative-error (pr/p :op4 (/ (frobenius-norm new-rem) norm-m)))
                                    )))
                              {:initial-matrix m :rem m, :approx-m (create-matrix ccs-factory (height m) (width m))})
                            doall))))
@@ -314,7 +333,7 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
   
   (let [{:keys [p q step error]} 
         (power-iteration m {:p-threshold 50 :q-threshold 5000})]
-    (def pf p) (def qf q) (def res-error error))
+    (def pf p) (def qf q))
   
   (->> pf vec-as-arrays-seq
     (map #(update-in % [0] word-of-id))
