@@ -7,7 +7,7 @@
            [org.la4j.factory Factory CRSFactory CCSFactory]
            [org.la4j.vector Vector]
            [org.la4j.vector.functor VectorProcedure]
-           [org.la4j.vector.sparse CompressedVector]
+           [org.la4j.vector.sparse CompressedVector SparseVector]
            )
   (:require [clojure.java.io :as io]
             [clojure.data.csv :as csv]
@@ -16,9 +16,8 @@
             [taoensso.timbre :as log])
   (:use clojure.repl clojure.pprint))
 
-(comment 
-  (set! *warn-on-reflection* true)
-  )
+(set! *warn-on-reflection* true)
+(require '[taoensso.timbre.profiling :as pr])
 
 ;; ----------------------------------------------------------------
 ;; Vector & Matrix utilities - wrappers for la4j
@@ -35,6 +34,7 @@
 
 (defn height "number of rows of matrix m" [^Matrix m] (.rows m))
 (defn width "number of columns of matrix m" [^Matrix m] (.columns m))
+(defn dimensions [m] [(height m) (width m)])
 (defn length "dimension of a vector" [^Vector v] (.length v))
 
 (defn get-v [^Vector v, i] (.get v i))
@@ -106,12 +106,29 @@
 (defn arrays-seq-to-vector 
   ([factory n arrays] (let [v (create-vector factory n)]
                         (doseq [[i vi] arrays] (set-v! v i vi))
-                        m)))
+                        v)))
+
+(defn ^Matrix from-square-vec
+  ([fact sarr] (let [m (count sarr), n (count (first sarr))
+                     ret (create-matrix fact m n)]
+                 (doseq [i (range m) j (range n)] (set-m! ret i j (get-in sarr [i j])))
+                 ret))
+  ([sarr] (from-square-vec default-factory sarr)))
+(defn ^Vector from-vec
+  ([fact v] (let [n (count v), ret (create-vector fact n)]
+              (doseq [i (range n)] (set-v! ret i (v i)))
+              ret))
+  ([v] (from-vec default-factory v)))
 
 (defn ^Vector *mv "default implementation of matrix-vector mutiplication" 
   [^Matrix m, ^Vector v] (.multiply m v))
 (defn ^Matrix *mm "default implementation of matrix-matrix mutiplication"
   [^Matrix m1, ^Matrix m2] (.multiply m1 m2))
+
+(defn r*sv "Scalar multiplication adapted to sparse vectors" 
+  [r, ^Vector v] (let [ret (.blank v)]
+                   (each-non-zero-v! v [i vi] (.set ret i (* (double vi) (double r))))
+                   ret))
 
 (defn ^Vector m*sv "Fast matrix-vector multiplication, assuming the vector is sparse."
   [^Matrix m, ^Vector v]
@@ -122,6 +139,12 @@
       (.eachNonZeroInColumn m j
         (m-proc [i _ mij] (.set ret i (+ (.get ret i) (* vj mij))))))
     ret))
+
+(defn +mm [^Matrix m1, ^Matrix m2] (.add m1 m2))
+(defn subtract [^Matrix m1, ^Matrix m2] (.subtract m1 m2))
+
+(defn to-row-matrix [^Vector v] (.toRowMatrix v))
+(defn to-column-matrix [^Vector v] (.toColumnMatrix v))
 
 (defn ^Matrix transpose "Default implementation of matrix transposition, takes an optional Factory."
   ([^Matrix m] (.transpose m))
@@ -149,7 +172,7 @@
 (defn ^Vector project-unit-circle "Scales v to have a euclidian norm of 1.0" 
   [^Vector v] (let [n (|sv| v)]
                 (if (> n 0) 
-                  (.divide v n)
+                  (r*sv (/ 1.0 n) v)
                   (throw (IllegalArgumentException. "Can't project zero vector on unit circle")))))
 
 (def threshold "returns a 'copy' of Vector v for which all but the k largest components of v are zeroed." 
@@ -181,7 +204,7 @@
          ret)))))
 
 (defn- pick-init-vector [^Matrix m]
-  (let [ret (.createVector crs-factory (width m))]
+  (let [ret (.createVector ccs-factory (int (width m)))]
     (each-non-zero-m! m [i j _] (set-v! ret j 1.0))
     ret))
 
@@ -198,24 +221,44 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
 :stop-epsilon : a small positive real number, the distance of 2 subsequent values of p or q under which the algorithm should stop."
   [m {:keys [init-vector stop-epsilon p-threshold q-threshold] 
       :or {init-vector (pick-init-vector m)
-           stop-epsilon 0.0000000001}}]
+           stop-epsilon 1e-6}}]
   (let [tm (transpose m)] 
     (loop [p init-vector
-           q (->> p (m*sv m) (threshold q-threshold) project-unit-circle)
+           q (->> p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
            rem (range)]
-      (let [next-p (->> q (m*sv tm) (threshold p-threshold) 
-                     project-unit-circle)
-            next-q (->> next-p (m*sv m) (threshold q-threshold) 
-                     project-unit-circle)
+      (let [next-p (->> q project-unit-circle (m*sv tm) (threshold p-threshold) project-unit-circle (pr/p :p-total))
+            next-q (->> next-p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
             step (first rem)]
-        (log/debug (str "STEP " step))
-        (if (and (< (euclid-distance next-p p) stop-epsilon)
-                 (< (euclid-distance next-q q) stop-epsilon))
-          {:p next-p, :q next-q, :step step}
+        ;(log/debug (str "STEP " step))
+        (if (and (< (pr/p :op5 (euclid-distance next-p p)) stop-epsilon)
+                 (< (pr/p :op6 (euclid-distance next-q q)) (* (pr/p :q-norm (|sv| q)) stop-epsilon)))
+          {:p p, :q q, :step step}
           (recur next-p next-q (next rem))
           ))
       ))
   )
+
+(defn get-sparse-components [m {:keys [iterations 
+                                       init-vector stop-epsilon p-threshold q-threshold] :as config}]
+  (pr/p :get-sparse-component-total 
+    (let [norm-m (frobenius-norm m)] 
+     (->> (range iterations)
+                           (reductions 
+                             (fn [{:keys [rem approx-m initial-matrix] :as previous} i]
+                               (log/debug (str "Iteration : " i))
+                               (let [{:keys [p q] :as pi-res} (pr/p :power-itr (power-iteration rem config))
+                                     component (pr/p :op1 (*mm (to-column-matrix q) (to-row-matrix p)))
+                                     new-approx (pr/p :op2 (+mm approx-m component))
+                                     ]
+                                 (-> previous 
+                                   (merge pi-res) 
+                                   (assoc :rem (pr/p :op3 (subtract rem component))
+                                          :component component
+                                          :approx-m new-approx
+                                          :relative-error (pr/p :op4 (/ (frobenius-norm new-approx) norm-m)))
+                                   )))
+                             {:initial-matrix m :rem m, :approx-m (create-matrix ccs-factory (height m) (width m))})
+                           doall))))
 
 ;; ----------------------------------------------------------------
 ;; Loading data
@@ -248,11 +291,21 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
         (reduce (fn [r {:keys [word j]}] (assoc! r j word)) (transient {})) persistent!
         )))
 
+(defn sum-rows [^Matrix m]
+  (let [ret (create-vector (.factory m) (width m))]
+    (each-non-zero-m! m [_ j mij] (set-v! ret j (+ (get-v ret j) mij)))
+    ret))
+
+(defn truncate-low-features [keep-n,^Matrix m]
+  (let [kept-indices (->> m sum-rows vec-as-arrays-seq (sort-by second) reverse (take keep-n) (map first))
+        ret (.blank m)]
+    (doseq [j kept-indices] (.setColumn ret j (.getColumn m j)))
+    ret))
 
 (comment 
   (do ;; few results dataset
-    (def m (load-sparse-matrix "unversioned/sparse_matrices/few-results_matrix.csv"
-                              421 32615 {}))
+    (def m (->> (load-sparse-matrix "unversioned/sparse_matrices/few-results_matrix.csv"
+                                  421 32615 {}) (truncate-low-features 5000)))
     (def word-of-id (load-words-map "unversioned/sparse_matrices/few-results_words.csv" {})))
   (do ;; many results dataset
     (def m (load-sparse-matrix "unversioned/sparse_matrices/many-results_matrix.csv"
@@ -268,4 +321,8 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
     (sort-by second) reverse
     (take 100)
     pprint)
+  
+  (def components (get-sparse-components
+                    m {:iterations 5
+                       :p-threshold 50 :q-threshold 200}))
   )
