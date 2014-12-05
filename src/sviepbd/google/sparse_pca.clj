@@ -233,16 +233,12 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
   [m {:keys [init-vector stop-epsilon p-threshold q-threshold] 
       :or {init-vector (pr/p :pick-inivector (pick-init-vector m))
            stop-epsilon 1e-6}}]
-  (let [tm (pr/p :transpose-m (#_transpose transpose-ccs m))] 
+  (let [tm (transpose-ccs m)] 
     (loop [p init-vector
-           q (->> p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
+           q (->> p (m*sv m) (threshold q-threshold))
            rem (range)]
-      (let [p1 (->> q (m*sv tm) (pr/p :tm*q))
-            p2 (->> p1 (threshold p-threshold) (pr/p :threshold-p))
-            next-p (->> p2 project-unit-circle (pr/p :project-p)) #_(->> q (m*sv tm) (threshold p-threshold) project-unit-circle)
-            q1 (->> next-p (m*sv m) (pr/p :m*p))
-            q2 (->> q1 (threshold q-threshold) (pr/p :threshold-q))
-            next-q (->> q2 project-unit-circle (pr/p :project-q)) #_(->> next-p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
+      (let [next-p (->> q (m*sv tm) (threshold p-threshold) project-unit-circle)
+            next-q (->> next-p (m*sv m) (threshold q-threshold))
             step (first rem)]
         ;(log/debug (str "STEP " step))
         (if (and (< (euclid-distance next-p p) stop-epsilon)
@@ -274,25 +270,24 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
 
 (defn get-sparse-components [m {:keys [iterations 
                                        init-vector stop-epsilon p-threshold q-threshold] :as config}]
-  (pr/p :get-sparse-component-total 
-    (let [norm-m (frobenius-norm m)] 
-     (->> (range iterations)
-                           (reductions 
-                             (fn [{:keys [rem approx-m initial-matrix] :as previous} i]
-                               (log/debug (str "Iteration : " i))
-                               (let [{:keys [p q] :as pi-res} (pr/p :power-itr (power-iteration rem config))
-                                     component (pr/p :op1  (sv-o*-sv q p) #_(*mm (to-column-matrix q) (to-row-matrix p)))
-                                     new-approx (pr/p :op2 (m+sm #_+mm approx-m component))
-                                     new-rem (pr/p :op3 (m-sm #_subtract rem component))]
-                                 (-> previous 
-                                   (merge pi-res) 
-                                   (assoc :rem new-rem
-                                          :component component
-                                          :approx-m new-approx
-                                          :relative-error (pr/p :op4 (/ (frobenius-norm new-rem) norm-m)))
-                                   )))
-                             {:initial-matrix m :rem m, :approx-m (create-matrix ccs-factory (height m) (width m))})
-                           doall))))
+  (let [norm-m (frobenius-norm m)] 
+    (->> (range iterations)
+      (reductions 
+        (fn [{:keys [rem approx-m initial-matrix] :as previous} i]
+          (log/debug (str "Iteration : " i))
+          (let [{:keys [p q] :as pi-res} (power-iteration rem config)
+                component (sv-o*-sv q p)
+                new-approx (m+sm #_+mm approx-m component)
+                new-rem (m-sm #_subtract rem component)]
+            (-> previous
+              (merge pi-res) 
+              (assoc :rem new-rem
+                     :component component
+                     :approx-m new-approx
+                     :relative-error (/ (frobenius-norm new-rem) norm-m))
+              )))
+        {:initial-matrix m :rem m, :approx-m (create-matrix ccs-factory (height m) (width m))})
+                          doall)))
 
 ;; ----------------------------------------------------------------
 ;; Loading data
@@ -309,10 +304,10 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
            (with-open [rdr (io/reader source)]
              (doseq [[i j val] (csv/read-csv rdr :separator csv-sep)] 
                (set-m! m 
-                       (java.lang.Integer/parseInt i) 
+                       (java.lang.Integer/parseInt i)
                        (java.lang.Integer/parseInt j)
                        (case normalization
-                         :boolean 1.0 
+                         :boolean 1.0
                          :none (java.lang.Double/parseDouble val))
                        ))
              m)))
@@ -335,6 +330,13 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
         ret (.blank m)]
     (doseq [j kept-indices] (.setColumn ret j (.getColumn m j)))
     ret))
+
+(defn print-pca-result! [word-dict p]
+  (->> p vec-as-arrays-seq
+    (map #(update-in % [0] word-dict))
+    (sort-by second) reverse
+    (take 100)
+    pprint))
 
 (comment 
   (do ;; few results dataset
