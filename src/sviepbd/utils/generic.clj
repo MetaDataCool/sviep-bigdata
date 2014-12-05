@@ -52,5 +52,3 @@ takes an optional p parallelism number."
   [port v]
   (when (some? v) (a/>!! port v))
   (a/close! port))
-
-

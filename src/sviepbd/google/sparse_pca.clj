@@ -3,6 +3,7 @@
            [org.la4j LinearAlgebra]
            [org.la4j.matrix Matrix Matrices]
            [org.la4j.matrix.functor MatrixProcedure]
+           [org.la4j.matrix.source MatrixSource]
            [org.la4j.matrix.sparse CRSMatrix CCSMatrix SparseMatrix]
            [org.la4j.factory Factory CRSFactory CCSFactory]
            [org.la4j.vector Vector]
@@ -126,7 +127,7 @@
   [^Matrix m1, ^Matrix m2] (.multiply m1 m2))
 
 (defn r*sv "Scalar multiplication adapted to sparse vectors" 
-  [r, ^Vector v] (let [ret (.blank v)]
+  [r, ^Vector v] (let [ret (.copy v)]
                    (each-non-zero-v! v [i vi] (.set ret i (* (double vi) (double r))))
                    ret))
 
@@ -137,7 +138,7 @@
     (each-non-zero-v! 
       v [j vj]
       (.eachNonZeroInColumn m j
-        (m-proc [i _ mij] (.set ret i (+ (.get ret i) (* vj mij))))))
+        (m-proc [i _ mij] (let [vi*mij (* vj mij)] (when (> vi*mij 0) (.set ret i (+ (.get ret i) vi*mij)))))))
     ret))
 
 (defn +mm [^Matrix m1, ^Matrix m2] (.add m1 m2))
@@ -165,6 +166,16 @@
   (->> (mat-as-arrays-seq m) (map #(nth % 2)) (map #(* % %)) (reduce + 0.0) java.lang.Math/sqrt))
 (defn frob-distance [^Matrix m1, ^Matrix m2] (frobenius-norm (.subtract m1 m2)))
 
+(defn transpose-ccs "Faster transposition using creating a MatrixSource proxy" 
+  [^Matrix m]
+  (let [f (.factory m)
+        source (reify MatrixSource
+                 (columns [_] (.rows m))
+                 (rows [_] (.columns m))
+                 (get [_ i j] (.get m j i))
+                 )]
+    (.createMatrix f source)))
+
 ;; ----------------------------------------------------------------
 ;; Sparse Power-Iteration
 ;; ----------------------------------------------------------------
@@ -177,7 +188,7 @@
 
 (def threshold "returns a 'copy' of Vector v for which all but the k largest components of v are zeroed." 
   (let [critical-card 100
-        get-abs (fn [i-vi] (->> i-vi (get 2) double java.lang.Math/abs))
+        get-abs (fn [i-vi] (->> (get i-vi 1) double java.lang.Math/abs))
         i-vi-comp (reify Comparator ;; compares [i v_i] pair by ascending value, then descending index
                     (compare [this p1 p2]
                       (let [[i1 v1] p1, [i2 v2] p2
@@ -220,18 +231,22 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
 
 :stop-epsilon : a small positive real number, the distance of 2 subsequent values of p or q under which the algorithm should stop."
   [m {:keys [init-vector stop-epsilon p-threshold q-threshold] 
-      :or {init-vector (pick-init-vector m)
+      :or {init-vector (pr/p :pick-inivector (pick-init-vector m))
            stop-epsilon 1e-6}}]
-  (let [tm (transpose m)] 
+  (let [tm (pr/p :transpose-m (#_transpose transpose-ccs m))] 
     (loop [p init-vector
            q (->> p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
            rem (range)]
-      (let [next-p (->> q project-unit-circle (m*sv tm) (threshold p-threshold) project-unit-circle (pr/p :p-total))
-            next-q (->> next-p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
+      (let [p1 (->> q (m*sv tm) (pr/p :tm*q))
+            p2 (->> p1 (threshold p-threshold) (pr/p :threshold-p))
+            next-p (->> p2 project-unit-circle (pr/p :project-p)) #_(->> q (m*sv tm) (threshold p-threshold) project-unit-circle)
+            q1 (->> next-p (m*sv m) (pr/p :m*p))
+            q2 (->> q1 (threshold q-threshold) (pr/p :threshold-q))
+            next-q (->> q2 project-unit-circle (pr/p :project-q)) #_(->> next-p (m*sv m) (pr/p :m*p) (threshold q-threshold) (pr/p :q-total))
             step (first rem)]
         ;(log/debug (str "STEP " step))
-        (if (and (< (pr/p :op5 (euclid-distance next-p p)) stop-epsilon)
-                 (< (pr/p :op6 (euclid-distance next-q q)) (* (pr/p :q-norm (|sv| q)) stop-epsilon)))
+        (if (and (< (euclid-distance next-p p) stop-epsilon)
+                 (< (euclid-distance next-q q) (* (|sv| q) stop-epsilon)))
           {:p p, :q q, :step step}
           (recur next-p next-q (next rem))
           ))
@@ -328,7 +343,7 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
     (def word-of-id (load-words-map "unversioned/sparse_matrices/few-results_words.csv" {})))
   (do ;; many results dataset
     (def m (load-sparse-matrix "unversioned/sparse_matrices/many-results_matrix.csv"
-                              8999 2950 {}))
+                              9000 2950 {}))
     (def word-of-id (load-words-map "unversioned/sparse_matrices/many-results_words.csv" {})))
   
   (let [{:keys [p q step error]} 
