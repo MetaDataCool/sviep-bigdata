@@ -176,6 +176,26 @@
                  )]
     (.createMatrix f source)))
 
+
+(defn- m+sm "Matrix addition optimized for sparse right matrix" [^Matrix m1, ^Matrix m2]
+  (let [d (.copy m1)]
+    (each-non-zero-m! m2 [i j m2ij] (.set d i j (+ (double (.get d i j)) (double m2ij))))
+    d))
+
+(defn- m-sm "Matrix substraction optimized for sparse right matrix" [^Matrix m1, ^Matrix m2]
+  (let [d (.copy m1)]
+    (each-non-zero-m! m2 [i j m2ij] (.set d i j (- (double (.get d i j)) (double m2ij))))
+    d))
+
+(defn- sv-o*-sv "Outer product optimized for sparse vectors" [^Vector v1, ^Vector v2]
+  (let [^Matrix ret (create-matrix (.factory v1) (length v1) (length v2))]
+    (each-non-zero-v! 
+      v1 [i v1i]
+      (each-non-zero-v!
+        v2 [j v2j]
+        (.set ret (int i) (int j) (* (double v1i) (double v2j)))))
+    ret))
+
 ;; ----------------------------------------------------------------
 ;; Sparse Power-Iteration
 ;; ----------------------------------------------------------------
@@ -197,22 +217,22 @@
                         (if (zero? comp1) (java.lang.Integer/compare i2 i1) comp1)
                         )))]
     (fn threshold [k, ^Vector v]
-     (let [si (support-indices v)
-           c (if (compressed-vector? v) (cardinality v) (count si))
+      (let [si (support-indices v)
+            c (if (compressed-vector? v) (cardinality v) (count si))
            
-           largest-i-vis (cond
-                           (< c k) (vec-as-arrays-seq v)
-                           (< c critical-card) (->> v vec-as-arrays-seq (sort-by get-abs) (take-last k))
-                           :else ;; iterate over the seq of non-zero indices, keeping the k highest in a SortedSet 
-                           (let [t (TreeSet. i-vi-comp)]
-                             (each-non-zero-v! v [i vi] 
-                                               (.add t [i vi])
-                                               (when (-> t .size (> k)) (.pollFirst t)))
-                             (->> t seq))
-                           )]
-       (let [ret (.blank v ccs-factory)]
-         (doseq [[i vi] largest-i-vis] (.set ret i vi))
-         ret)))))
+            largest-i-vis (cond
+                            (< c k) (vec-as-arrays-seq v)
+                            (< c critical-card) (->> v vec-as-arrays-seq (sort-by get-abs) (take-last k))
+                            :else ;; iterate over the seq of non-zero indices, keeping the k highest in a SortedSet 
+                            (let [t (TreeSet. i-vi-comp)]
+                              (each-non-zero-v! v [i vi] 
+                                                (.add t [i vi])
+                                                (when (-> t .size (> k)) (.pollFirst t)))
+                              (->> t seq))
+                            )]
+        (let [ret (.blank v ccs-factory)]
+          (doseq [[i vi] largest-i-vis] (.set ret i vi))
+          ret)))))
 
 (defn- pick-init-vector [^Matrix m]
   (let [ret (.createVector ccs-factory (int (width m)))]
@@ -248,25 +268,6 @@ Defaults to having 1.0 on every feature for which the matrix has a non-zero colu
           ))
       ))
   )
-
-(defn- m+sm [^Matrix m1, ^Matrix m2]
-  (let [d (.copy m1)]
-    (each-non-zero-m! m2 [i j m2ij] (.set d i j (+ (double (.get d i j)) (double m2ij))))
-    d))
-
-(defn- m-sm [^Matrix m1, ^Matrix m2]
-  (let [d (.copy m1)]
-    (each-non-zero-m! m2 [i j m2ij] (.set d i j (- (double (.get d i j)) (double m2ij))))
-    d))
-
-(defn- sv-o*-sv [^Vector v1, ^Vector v2]
-  (let [^Matrix ret (create-matrix (.factory v1) (length v1) (length v2))]
-    (each-non-zero-v! 
-      v1 [i v1i]
-      (each-non-zero-v!
-        v2 [j v2j]
-        (.set ret (int i) (int j) (* (double v1i) (double v2j)))))
-    ret))
 
 (defn get-sparse-components [m {:keys [iterations 
                                        init-vector stop-epsilon p-threshold q-threshold] :as config}]
