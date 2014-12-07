@@ -39,3 +39,27 @@ The crawler is organized as a pipeline of functions that process maps representi
 ```
 
 This organizations enables you to easily test manually each step of the processing, to do it partly, store the results (MongoDB) and continue the processing later, and to decide how to structure your program for performance (parallel/pipelined/async ...).
+
+Also, because these are _lazy_ Clojure sequences, you don't have to worry about fitting in memory: they will essentially be processed like streams of data.
+
+An example of what a result looks like in JSON representation may be found [here](https://github.com/MetaDataCool/data/blob/eeff348b63883b66dcc3019be64492b6f18d0791/example-result.json).
+
+## Using MongoDB for storing and retrieving crawling results
+
+Before using MongoDB, make sure you have a MongoDB local server running at `localhost:27017`:
+```
+mongod --dbpath path/to/my/mongo/data/directory
+```
+
+and don't forget to connect the MongoDB client :
+`(connect-mongo!)`
+
+To store a lazy seq of results (see example above) in MongoDB, do something like :
+```
+(->> my-seq-of-results (map #(mc/save "results_collection_name" %)) dorun)
+```
+
+And to retrieve the results for the query `"my query"` : 
+```
+(mc/find-maps "results_collection_name" {:query "my query"})
+```
