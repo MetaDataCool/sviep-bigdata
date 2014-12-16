@@ -257,6 +257,43 @@ that is a seq of maps with :lemma and :weight properties."
   )
 
 ;; ----------------------------------------------------------------
+;; In-memory words indexation
+;; ----------------------------------------------------------------
+
+(defn index-words! "Performs in-memory words indexing oftokenized results.
+
+Takes an input channel of tokenized results (of the form {:res_index <result index : long>, :tokens_bag [{:word <word : String>, :weight <weight : double>}]}),
+and an output channel, and puts into the output channel 'token entries' (of the form {:w <word index>, :r <result index>, :v <weight of token>}).
+
+Returns a channel that will receive a sequence of {:w <word : String>, :k <word index : long>} pairs sorted by ascending word index.
+
+The input channel must close to complete, and then the output channel will be closed.
+The underlying presumption is that there are not too many distinct words to fit in memory.
+"
+  [res-chan-in entries-chan-out]
+  (a/go-loop 
+    [dict {}, next-word-index 0]
+    (if-let [{:keys [tokens_bag res_index] :as res} (a/<! res-chan-in)]
+      (let [[new-dict nwi entries] (->> tokens_bag
+                                     (reduce (fn [[td nwi es] {:keys [word weight]}]
+                                               (if-let [wi (get td word)]
+                                                 [td nwi (conj es {:w wi, :v weight, :r res_index})]
+                                                 (let [td (assoc td word nwi)
+                                                       nwi (inc nwi)]  ;; add a new word index
+                                                   [td nwi (conj es {:w nwi, :v weight, :r res_index})]))
+                                               ) [dict next-word-index []])
+                                     )]
+        (a/<! (a/onto-chan entries-chan-out entries false))
+        (recur new-dict, nwi))
+      (do ;; done indexing
+        (a/close! entries-chan-out)
+        (->> dict
+         (map (fn [[w k]] {:w w :k k}))
+         (sort-by :k)
+         )))
+    ))
+
+;; ----------------------------------------------------------------
 ;; SQLite
 ;; ----------------------------------------------------------------
 (def sqlite-connection 
@@ -432,6 +469,7 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
                       (failsafe-map crawl-search-result) ;; crawls a search result element to extract the relevant information (text, link, etc.)
                       (map-pipeline-async fetch-website-a) ;; asynchronous equivalent of the above (faster)
                       (failsafe-pmap tokenize-result) ;; tokenizes the text fields of the data.
+                      (map (fn [i r] (assoc r :res_index i)) (range)) ;; adds an integer :res_index property to all results 
                       )]
     (log/debug "Connecting to Mongo...")
     (connect-mongo!)
