@@ -39,7 +39,9 @@
 
 From an asynchronous function af, and a seq coll, creates a lazy seq that is the result of applying the asynchronous function af to each element of coll.
 af must be an asyncronous function as described in clojure.core.async/pipeline-async.
-takes an optional p parallelism number."
+takes an optional p parallelism number.
+
+Note that unlike pmap, map-pipeline-async will keep the order of the original sequence."
   ([af p coll]
     (let [ic (a/chan p), oc (a/chan p)]
       (a/onto-chan ic coll)

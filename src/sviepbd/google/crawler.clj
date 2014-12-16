@@ -43,9 +43,14 @@
     (def heading-text (text rc-h3))
     (def r-link (get (->> (select-one a-rc "a") (attr "href") java.net.URI. .getQuery codec/form-decode) "q"))
     (def meta-description (-> a-rc (select-one ".st") text))
-    ))
+    )
+  
+  (def refused-page "Page when Google suspects you're a robot."
+    "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n<html>\n<head><meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\"><meta name=\"viewport\" content=\"initial-scale=1\"><title>http://www.google.com/search?q=coucou&amp;start=0&amp;lr=lang_en</title></head>\n<body style=\"font-family: arial, sans-serif; background-color: #fff; color: #000; padding:20px; font-size:18px;\" onload=\"e=document.getElementById('captcha');if(e){e.focus();}\">\n<div style=\"max-width:400px;\">\n <hr noshade size=\"1\" style=\"color:#ccc; background-color:#ccc;\"><br>\n \n  To continue, please type the characters below:<br><br>\n  <img src=\"/sorry/image?id=13265656025017129814&amp;hl=en\" border=\"1\" alt=\"Please enable images\"><br><br><form action=\"CaptchaRedirect\" method=\"get\"><input type=\"hidden\" name=\"continue\" value=\"http://www.google.com/search?q=coucou&amp;start=0&amp;lr=lang_en\"><input type=\"hidden\" name=\"id\" value=\"13265656025017129814\"><input type=\"text\" name=\"captcha\" value=\"\" id=\"captcha\" size=\"12\" style=\"font-size:16px; padding:3px 0 3px 5px; margin-left:0px;\"><input type=\"submit\" name=\"submit\" value=\"Submit\" style=\"font-size:18px; padding:4px 0;\"><br><br><br></form>\n  <hr noshade size=\"1\" style=\"color:#ccc; background-color:#ccc;\">\n  \n   <div style=\"font-size:13px;\">\n    <b>About this page</b><br><br>Our systems have detected unusual traffic from your computer network.  This page checks to see if it&#39;s really you sending the requests, and not a robot.  <a href=\"#\" onclick=\"document.getElementById('infoDiv').style.display='block';\">Why did this happen?</a><br><br>\n    <div id=\"infoDiv\" style=\"display:none; background-color:#eee; padding:10px; margin:0 0 15px 0; line-height:1.4em;\">\n     This page appears when Google automatically detects requests coming from your computer network which appear to be in violation of the <a href=\"//www.google.com/policies/terms/\">Terms of Service</a>. The block will expire shortly after those requests stop.  In the meantime, solving the above CAPTCHA will let you continue to use our services.<br><br>This traffic may have been sent by malicious software, a browser plug-in, or a script that sends automated requests.  If you share your network connection, ask your administrator for help &mdash; a different computer using the same IP address may be responsible.  <a href=\"//support.google.com/websearch/answer/86640\">Learn more</a><br><br>Sometimes you may be asked to solve the CAPTCHA if you are using advanced terms that robots are known to use, or sending requests very quickly.\n    </div>\n  \n  \n \n \n IP address: 24.130.80.223<br>Time: 2014-12-16T19:31:11Z<br>URL: http://www.google.com/search?q=coucou&amp;start=0&amp;lr=lang_en<br>\n </div>\n</div>\n</body>\n</html>\n"
+    )
+  )
 
-(def results-per-query  "How many results get crawled for a query." 500)
+(def ^:dynamic results-per-query  "How many results get crawled for a query." 500)
 
 (defn- result-pages "Creates a lazy seq of the pages to fetch for a given query (given that each page contains 10 results)"
   [^String query]
@@ -80,31 +85,39 @@
   [{:keys [result-elem]}]
   (-> result-elem (select "img") count (> 1)))
 
-(defn get-search-results "Breaks a results page into the DOM elements that are individual results" 
+(defn get-search-results "Breaks a results page into the DOM elements that are individual results,
+returns a seq of one map with a truthy :invalid property if the response page is not well formed (typically because Google has rejected the request)"
   [{:keys [query_result_html start_index], :as page}]
   (let [parsed-doc (parse-html query_result_html)
-        results-block (select-one parsed-doc "#res")
-        results-rcs (select results-block ".g")]
-    (->> results-rcs 
-      (map (fn [idx r] 
-             (-> page 
-               (assoc :rank (+ start_index idx),:result-elem r,:result_html (html r))
-               (dissoc :start_index :query_result_html))
-             ) (range))
-      (remove is-images-result?)
-    )))
+        results-block (select-one parsed-doc "#res")]
+    (if results-block
+      (->> (select results-block ".g") 
+        (map (fn [idx r] 
+               (-> page 
+                 (assoc :rank (+ start_index idx),:result-elem r,:result_html (html r))
+                 (dissoc :start_index :query_result_html))
+               ) (range))
+        (remove is-images-result?))
+      (do 
+        (log/warn (str "Invalid result page at index " start_index))
+        [(assoc page :invalid true)]))
+    ))
 
-(defn crawl-search-result "Performs scraping of a search result element. Extracts heading text, link URL and meta-description."
+(defn valid-result? [res] (not (:invalid res)))
+
+(defn crawl-search-result "Performs scraping of a search result element. Extracts heading text, link URL and meta-description (if present)."
   [{:keys [result-elem] :as r}]
   (let [rc-h3 (select-one result-elem "h3.r")
         heading-text (text rc-h3)
-        r-link (get (->> (select-one result-elem "a") (attr "href") java.net.URI. .getQuery codec/form-decode) "q")
-        meta-description (-> result-elem (select-one ".st") text)]
-    (-> r 
-      (assoc :heading heading-text
-             :link r-link
-             :meta_description meta-description)
-      (dissoc :result-elem)
+        r-a (select-one result-elem "a")
+        r-link (when r-a (get (->> r-a (attr "href") java.net.URI. .getQuery codec/form-decode) "q"))
+        meta-description (select-one result-elem ".st")]
+    (cond-> r
+            rc-h3 (assoc :heading (text rc-h3))
+            r-link (assoc :link r-link)
+            meta-description (assoc :meta_description (text meta-description))
+            
+            true (dissoc :result-elem)
       )))
 
 ;; ----------------------------------------------------------------
@@ -124,9 +137,13 @@
 
 (defn fetch-website-a "Fetches the HTML of the website of the result; meant to be called with pipeline-async" 
   [{:keys [link] :as r} ch]
-  (http/get link (fn [resp] 
-                   (>!!-and-close! ch (add-website r resp))
-                   )))
+  (if link 
+    (http/get link (fn [resp] 
+                     (>!!-and-close! ch (add-website r resp))
+                     ))
+    (do (log/warn "No link here : " (select-keys r [:query :rank]))
+      (a/close! ch)
+      r)))
 
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
   [s] (map (fn [i item] (assoc item :rank i)) (range) s))
@@ -406,12 +423,51 @@ WHERE bows.word=ws.word;" bow-table-name words-table-name)
 ;; Scripts
 ;; ----------------------------------------------------------------
 
-(defn perform-scraping! []
-  (log/info "Connecting to MongoDB...")
-  (connect-mongo!)
-  (log/info "Starting to scrape...")
-  (->> (crawled-results-seq "mining")
-    (failsafe-map save-result!)
-    progress-logging-seq dorun time)
-  (log/info "done scraping.")
-  )
+(defn scrape-end-to-end! [query]
+  (let [slugified-query (-> query (s/replace #"\W+" " ") s/trim s/lower-case (s/replace " " "-"))
+        results-seq (->> (result-pages query) ;; a seq of result pages maps (a result page contains up to 10 query results)
+                      (map-pipeline-async fetch-result-page-a)
+                      (mapcat get-search-results) ;; parses the result page HTML and splits its DOM into search results
+                      (take-while valid-result?) ;; stops when google rejects the search
+                      (failsafe-map crawl-search-result) ;; crawls a search result element to extract the relevant information (text, link, etc.)
+                      (map-pipeline-async fetch-website-a) ;; asynchronous equivalent of the above (faster)
+                      (failsafe-pmap tokenize-result) ;; tokenizes the text fields of the data.
+                      )]
+    (log/debug "Connecting to Mongo...")
+    (connect-mongo!)
+    
+    (log/debug (str "Crawling results and saving them to MongoDB in collection " results-coll " ..."))
+    (->> results-seq (map #(mc/save results-coll %)) (progress-logging-seq 50) dorun)
+    
+    (log/debug "Clearing SQLite database")
+    (do 
+      (drop-words-table!)
+      (drop-bow-table!)
+      
+      (create-words-table!)
+      (create-bow-table!))
+    
+    ;; start with putting all the words in the database
+    (log/debug "Putting bags of words into SQLite database...")
+    (sql/with-db-transaction [con sqlite-connection]
+      (->> (mc/find-maps results-coll {:query query})
+        (progress-logging-seq 10)
+        (mapcat :tokens_bag)
+        (map #(save-words! % con))
+        dorun time
+       ))
+    ;; adding word ids
+    (->> (k/select word)
+      (map (fn [i w] (assoc w :id i)) (range))
+      (map #(k/update word (k/set-fields {:id (% :id)}) (k/where {:word (% :word)})))
+      ;(progress-logging-seq 500)
+      dorun time
+      )
+    
+    (let [prefix (str "unversioned/" slugified-query)
+          matrix-file (str prefix "_matrix.csv")
+          words-file (str prefix "_words.csv")]
+      (export-matrices! {:matrix-file matrix-file, :dictionary-file words-file}))
+    
+    (log/info "Done.")
+    ))
