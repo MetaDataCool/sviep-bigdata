@@ -11,9 +11,6 @@
             [clj-time.coerce :as tc]
             [monger.core :as mg]
             [monger.collection :as mc]
-            [clojure.java.jdbc :as sql]
-            [korma.db :as db]
-            [korma.core :as k]
             [clojure.data.csv :as csv]
             
             [sviepbd.utils.nlp :as nlpu]
@@ -219,42 +216,15 @@ that is a seq of maps with :lemma and :weight properties."
 
 (defn crawled-results-seq "Returns the crawled results corresponding to the query as a lazy sequence"
   [^String query]
-  (->> (result-pages query)
-    (failsafe-pmap fetch-result-page) 
-    (mapcat get-search-results)
-    (failsafe-map crawl-search-result)
-    
-    ;(map-pipeline-async fetch-website-a)
-    
-    ;(pmap tokenize-result)
-    
-    ;time
+  (->> (result-pages query) ;; a seq of result pages maps (a result page contains up to 10 query results)
+    (map-pipeline-async fetch-result-page-a) ;; fetches the Google result pages (with about 10 results per page)
+    (mapcat get-search-results) ;; parses the result page HTML and splits its DOM into search results
+    (take-while valid-result?) ;; stops when google rejects the search
+    (failsafe-map crawl-search-result) ;; crawls a search result element to extract the relevant information (text, link, etc.)
+    (map-pipeline-async fetch-website-a) ;; asynchronous equivalent of the above (faster)
+    (failsafe-pmap tokenize-result) ;; tokenizes the text fields of the data.
+    (map (fn [i r] (assoc r :res_index i)) (range)) ;; adds an integer :res_index property to all results 
     ))
-
-;; ----------------------------------------------------------------
-;; MongoDB
-;; ----------------------------------------------------------------
-(def mongo-uri "mongodb://localhost:27017/sviepbd")
-(defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
-(comment (connect-mongo!))
-
-(def results-coll "MongoDB collection of 9000 results - some in French - with approximate ranking." 
-  "results")
-(defn get-results [] (mc/find-maps results-coll))
-(def save-result! #(mc/save results-coll %))
-
-(def dissoc-_id #(dissoc % :_id))
-
-(def complete-results-coll "MongoDB collection of 421 results with their website's HTML fetched"
-  "results_complete")
-(defn get-complete-results [] (mc/find-maps complete-results-coll))
-(def save-complete-result! #(mc/save complete-results-coll %))
-
-(comment
-  ;; saving all results to mongo
-  (doseq [r (crawled-results-seq "mining")]
-    (save-result! r))
-  )
 
 ;; ----------------------------------------------------------------
 ;; In-memory words indexation
@@ -294,218 +264,75 @@ The underlying presumption is that there are not too many distinct words to fit 
     ))
 
 ;; ----------------------------------------------------------------
-;; SQLite
+;; MongoDB
 ;; ----------------------------------------------------------------
-(def sqlite-connection 
-  (db/sqlite3 {:db (-> "data.db" io/resource .getPath)})
-  ;(db/h2 {:db (-> "datah2.db" io/resource .getPath)})
-  )
-(db/defdb sqlite-db sqlite-connection) ;; connects to SQLite database which file is resources/data.db (unversioned)
-(def sqlite-pool @(:pool sqlite-db))
+(def mongo-uri "mongodb://localhost:27017/sviepbd")
+(defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
+(comment (connect-mongo!))
 
-(def results-table "results")
-(def words-table "words")
-(def bow-table "bags_of_words")
+(def queries-coll 
+  "queries")
+(def scraped-results-coll "Collection where to put the results of the scraping"
+  "scraped_results")
+(def matrix-entries-coll "Collection listing the entries of words matrices"
+  "matrix_entries")
+(def words-tables-coll "Collection to store words tables"
+  "words_tables")
 
-(defn create-results-table! []
-  (sql/db-do-commands sqlite-pool 
-                      (sql/create-table-ddl
-                        :results
-                        [:id :integer "PRIMARY KEY" "AUTOINCREMENT"]
-                        [:heading :varchar]
-                        [:meta_description :varchar]
-                        [:rank :integer]
-                        [:query :varchar]
-                        )))
-(defn drop-results-table! [] 
-  (sql/db-do-commands sqlite-pool (sql/drop-table-ddl :results)))
 
-(defn create-words-table! []
-  (sql/db-do-commands sqlite-pool 
-                      (sql/create-table-ddl
-                        :words
-                        [:id :integer]
-                        [:word :varchar "UNIQUE"]
-                        )))
-(defn drop-words-table! [] 
-  (sql/db-do-commands sqlite-pool (sql/drop-table-ddl :words)))
+(def dissoc-_id #(dissoc % :_id))
 
-(declare result-ent word bags_of_words)
-
-(k/defentity result-ent
-  (k/table results-table)
-  (k/prepare (comp #(select-keys % [:heading :meta_description :rank :query])
-                   ))
-  (k/many-to-many word bow-table)
-  )
-(def save-result-to-sqlite! #(k/insert result-ent (k/values %)))
-
-(k/defentity word
-  (k/table words-table)
-  (k/prepare (comp #(select-keys % [:word :id])
-                   ))
-  (k/many-to-many result-ent bow-table)
-  )
-(defn save-words! [{:keys [word]} & [con]]
-  (sql/execute! (or con sqlite-pool) ["INSERT OR IGNORE INTO \"words\" (\"word\") VALUES (?);" word]))
-
-;; a table to use as a sparse matrix reprensentation.
-(defn create-bow-table! []
-  (sql/db-do-commands sqlite-pool
-                      (sql/create-table-ddl
-                        bow-table
-                        [:result_id :integer]
-                        [:word :varchar]
-                        [:weight :double]
-                        )))
-(defn drop-bow-table! [] (sql/db-do-commands sqlite-pool (sql/drop-table-ddl bow-table)))
-(k/defentity bags_of_words
-  (k/table bow-table)
-  (k/prepare (comp #(select-keys [:word :weight]))
-             )
-  )
-
-(defn export-matrices! [{:keys [matrix-file, dictionary-file 
-                                bow-table-name, words-table-name] 
-                         :or {matrix-file "words_matrix.csv", dictionary-file "dictionary.csv"
-                              bow-table-name bow-table, words-table-name words-table}}]
-  ;; printing bags-of-words table
-  (log/info (str "Exporting the bags of words as sparse matrix into " 
-                 (.getAbsolutePath (io/as-file matrix-file)) 
-                 "..."))
-  (with-open [wtr (io/writer matrix-file :append false)] 
-    (csv/write-csv wtr 
-      (rest (sql/query sqlite-pool
-                       [(format "
-SELECT result_id,id,weight
-FROM %s AS bows
-JOIN %s AS ws
-WHERE bows.word=ws.word;" bow-table-name words-table-name) 
-                        ]
-                       :as-arrays? true
-                 ))
-      :separator \space
-      ))
-  (log/info (str "Exported a matrix of "
-                 (-> (sql/query sqlite-pool 
-                                [(format "SELECT COUNT(DISTINCT result_id) AS count FROM %s ;" bow-table-name)]) first :count) " results"
-                 " x "
-                 (-> (sql/query sqlite-pool 
-                                [(format "SELECT COUNT(*) AS count FROM %s ;" words-table-name)]) first :count) " words"
-                 ))
-  
-  ;; printing words table
-  (log/info (str "Exporting the words table into " 
-                 (.getAbsolutePath (io/as-file dictionary-file)) 
-                 "..."))
-  (with-open [wtr (io/writer dictionary-file :append false)] 
-    (csv/write-csv wtr 
-                   (rest (sql/query sqlite-pool "SELECT id,word FROM words"
-                                    :as-arrays? true
-                                    ))
-                   :separator \space
-                   ))
-  
-  )
-
-(comment ;; how to get sparse matrix representations
-  ;; clean SQL database
-  (do 
-    (drop-words-table!)
-    (drop-bow-table!)
-  
-    (create-words-table!)
-    (create-bow-table!))
-  
-  ;; start with putting all the words in the database
-  (sql/with-db-transaction [con sqlite-connection]
-    (->> (get-complete-results)
-      (progress-logging-seq 10)
-      (mapcat :tokens_bag)
-      (map #(save-words! % con))
-      dorun
-      time
-     ))
-  ;; adding word ids
-  (->> (k/select word)
-    (map (fn [i w] (assoc w :id i)) (range))
-    (map #(k/update word (k/set-fields {:id (% :id)}) (k/where {:word (% :word)})))
-    (progress-logging-seq 500)
-    dorun time
-    )
-  
-  ;; storing tokenization in bags_of_words table
-  (sql/with-db-transaction [con sqlite-connection]
-    (->> (get-complete-results)
-      (progress-logging-seq 10)
-      (map (fn [i r] (assoc r :result_id i)) (range))
-      (mapcat (fn [{:keys [tokens_bag result_id]}] 
-                (->> tokens_bag (map #(assoc % :result_id result_id)))
-                ))
-      (map #(select-keys % [:word :weight :result_id]))
-      (map #(sql/insert! con bow-table %))
-      dorun
-      time
-     ))
-  
-  ;;exporting 
-  (export-matrices! {:matrix-file "unversioned/sparse_matrices/few-results_matrix.csv"
-                     :dictionary-file "unversioned/sparse_matrices/few-results_words.csv"})
-  ;; - or -
-  (export-matrices! {:matrix-file "unversioned/sparse_matrices/many-results_matrix.csv"
-                     :dictionary-file "unversioned/sparse_matrices/many-results_words.csv"})
-  )
 
 ;; ----------------------------------------------------------------
 ;; Scripts
 ;; ----------------------------------------------------------------
+(defn- scrape-and-save! [query-id query]
+  (let [scraped-seq (crawled-results-seq query)
+                batch-size 10]
+            (->> scraped-seq
+              (map #(assoc % :query_id query-id))
+              (progress-logging-seq 50)
+              (partition batch-size) (map #(mc/insert-batch scraped-results-coll %))
+              dorun)
+            ))
 
-(defn scrape-end-to-end! [query]
-  (let [slugified-query (-> query (s/replace #"\W+" " ") s/trim s/lower-case (s/replace " " "-"))
-        results-seq (->> (result-pages query) ;; a seq of result pages maps (a result page contains up to 10 query results)
-                      (map-pipeline-async fetch-result-page-a)
-                      (mapcat get-search-results) ;; parses the result page HTML and splits its DOM into search results
-                      (take-while valid-result?) ;; stops when google rejects the search
-                      (failsafe-map crawl-search-result) ;; crawls a search result element to extract the relevant information (text, link, etc.)
-                      (map-pipeline-async fetch-website-a) ;; asynchronous equivalent of the above (faster)
-                      (failsafe-pmap tokenize-result) ;; tokenizes the text fields of the data.
-                      (map (fn [i r] (assoc r :res_index i)) (range)) ;; adds an integer :res_index property to all results 
-                      )]
-    (log/debug "Connecting to Mongo...")
-    (connect-mongo!)
+(defn- perform-indexation!
+  [query-id results-seq]
+  (let [res-in-chan (a/chan 50)
+        entries-out-chan (a/chan 1000)
+        words-table-chan (index-words! res-in-chan entries-out-chan)
+        entries-batch-size 200]
+    (a/onto-chan res-in-chan results-seq)
     
-    (log/debug (str "Crawling results and saving them to MongoDB in collection " results-coll " ..."))
-    (->> results-seq (map #(mc/save results-coll %)) (progress-logging-seq 50) dorun)
-    
-    (log/debug "Clearing SQLite database")
-    (do 
-      (drop-words-table!)
-      (drop-bow-table!)
+    ;; saving matrix entries to db
+    (->> (seq-of-chan entries-out-chan)
+      (map #(assoc % :query_id query-id))
+      (partition entries-batch-size) (map #(mc/insert-batch matrix-entries-coll %))
+      dorun)
       
-      (create-words-table!)
-      (create-bow-table!))
-    
-    ;; start with putting all the words in the database
-    (log/debug "Putting bags of words into SQLite database...")
-    (sql/with-db-transaction [con sqlite-connection]
-      (->> (mc/find-maps results-coll {:query query})
-        (progress-logging-seq 10)
-        (mapcat :tokens_bag)
-        (map #(save-words! % con))
-        dorun time
-       ))
-    ;; adding word ids
-    (->> (k/select word)
-      (map (fn [i w] (assoc w :id i)) (range))
-      (map #(k/update word (k/set-fields {:id (% :id)}) (k/where {:word (% :word)})))
-      ;(progress-logging-seq 500)
-      dorun time
-      )
-    
-    (let [prefix (str "unversioned/" slugified-query)
-          matrix-file (str prefix "_matrix.csv")
-          words-file (str prefix "_words.csv")]
-      (export-matrices! {:matrix-file matrix-file, :dictionary-file words-file}))
-    
-    (log/info "Done.")
+    ;; saving words table to db
+    (->> (a/<!! words-table-chan)
+      (map #(assoc % :query_id query-id))
+      (mc/insert-batch words-tables-coll))
+            
     ))
+
+(defn perform-scraping! "Performs the whole scraping and indexation algorithm for the specified query.
+This includes creating an query document (and therefore MongoID)."
+  [query]
+  (connect-mongo!)
+  (let [{query-id :_id ,:as query-doc} (mc/save-and-return queries-coll {:query query}) ;; creating and saving a query document
+        
+        complete-chan
+        (a/thread 
+          (log/info (str "Starting scraping for query '" query "' with id " query-id " ..."))
+          (scrape-and-save! query-id query)
+          (log/info "... done.")
+          
+          (log/info (str "Starting indexation for query " query "' ..."))
+          (perform-indexation! query-id (mc/find-maps scraped-results-coll {:query_id query-id}))
+          (log/info "... done.")
+          
+          (log/info (str "Done scraping for query '" query "' with id " query-id ".")))]
+    {:query_id query-id
+     :completion-chan complete-chan}))

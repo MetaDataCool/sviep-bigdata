@@ -30,7 +30,7 @@
   ([seq] (progress-logging-seq 1 seq))
   )
 
-(defn- seq-of-chan "Creates a lazy seq from a core.async channel." [c]
+(defn seq-of-chan "Creates a lazy seq from a core.async channel." [c]
   (lazy-seq
     (let [fst (a/<!! c)]
       (if (nil? fst) nil (cons fst (seq-of-chan c)) ))))
