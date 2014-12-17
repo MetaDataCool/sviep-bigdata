@@ -28,6 +28,11 @@
                  [org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.
                  [com.h2database/h2 "1.3.170"] ;; H2
                  [korma "0.3.0"]; Korma : Clojure DSL for RDBMS.
+                 
+                 [compojure "1.2.1"]; routing library
+                 [ring-server "0.3.1"]; wrapper for Netty, handles HTTP
+                 [ring/ring-json "0.3.1"] ; Standard Ring middleware functions for handling JSON requests and responses.
+                 [ring/ring-defaults "0.1.2"] ;; A library to provide sensible Ring middleware defaults
                  ]
   :source-paths ["src"]
   :java-source-paths ["javasrc"]
