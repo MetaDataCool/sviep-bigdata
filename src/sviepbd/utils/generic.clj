@@ -4,7 +4,7 @@
             )
   (:use clojure.repl clojure.pprint))
 
-(def errors "Atom that holds the erros encountered by failsafe-map and failsafe-pmap in a vector" 
+(def ^:dynamic errors "Atom that holds the erros encountered by failsafe-map and failsafe-pmap in a vector" 
   (atom []))
 
 (defn failsafe-map [f coll]
@@ -54,3 +54,8 @@ Note that unlike pmap, map-pipeline-async will keep the order of the original se
   [port v]
   (when (some? v) (a/>!! port v))
   (a/close! port))
+
+(defn stack-trace [^Throwable e]
+  (let [sw (java.io.StringWriter.)]
+    (.printStackTrace e (java.io.PrintWriter. sw))
+    (.toString sw)))

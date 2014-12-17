@@ -136,7 +136,8 @@ returns a seq of one map with a truthy :invalid property if the response page is
   [{:keys [link] :as r} ch]
   (if link 
     (http/get link (fn [resp] 
-                     (>!!-and-close! ch (add-website r resp))
+                     (try (>!!-and-close! ch (add-website r resp))
+                       (finally (a/close! ch)))
                      ))
     (do (log/warn "No link here : " (select-keys r [:query :rank]))
       (a/close! ch)
@@ -279,6 +280,8 @@ The underlying presumption is that there are not too many distinct words to fit 
 (def words-tables-coll "Collection to store words tables"
   "words_tables")
 
+(def errors-coll "Collection where to save error information"
+  "errors")
 
 (def dissoc-_id #(dissoc % :_id))
 
@@ -286,13 +289,14 @@ The underlying presumption is that there are not too many distinct words to fit 
 ;; ----------------------------------------------------------------
 ;; Scripts
 ;; ----------------------------------------------------------------
+
 (defn- scrape-and-save! [query-id query]
   (let [scraped-seq (crawled-results-seq query)
                 batch-size 10]
             (->> scraped-seq
-              (map #(assoc % :query_id query-id))
+              (map #(-> % (assoc :query_id query-id)))
               (progress-logging-seq 50)
-              (partition batch-size) (map #(mc/insert-batch scraped-results-coll %))
+              (partition-all batch-size) (failsafe-map #(mc/insert-batch scraped-results-coll %))
               dorun)
             ))
 
@@ -307,7 +311,7 @@ The underlying presumption is that there are not too many distinct words to fit 
     ;; saving matrix entries to db
     (->> (seq-of-chan entries-out-chan)
       (map #(assoc % :query_id query-id))
-      (partition entries-batch-size) (map #(mc/insert-batch matrix-entries-coll %))
+      (partition-all entries-batch-size) (map #(mc/insert-batch matrix-entries-coll %))
       dorun)
       
     ;; saving words table to db
@@ -319,20 +323,43 @@ The underlying presumption is that there are not too many distinct words to fit 
 
 (defn perform-scraping! "Performs the whole scraping and indexation algorithm for the specified query.
 This includes creating an query document (and therefore MongoID)."
-  [query]
-  (connect-mongo!)
-  (let [{query-id :_id ,:as query-doc} (mc/save-and-return queries-coll {:query query}) ;; creating and saving a query document
+  ([query {:keys [results_per_query]
+           :or {results_per_query results-per-query}
+           :as opts}]
+    (connect-mongo!)
+    (let [{query-id :_id ,:as query-doc} (mc/save-and-return queries-coll {:query query}) ;; creating and saving a query document
         
-        complete-chan
-        (a/thread 
-          (log/info (str "Starting scraping for query '" query "' with id " query-id " ..."))
-          (scrape-and-save! query-id query)
-          (log/info "... done.")
-          
-          (log/info (str "Starting indexation for query " query "' ..."))
-          (perform-indexation! query-id (mc/find-maps scraped-results-coll {:query_id query-id}))
-          (log/info "... done.")
-          
-          (log/info (str "Done scraping for query '" query "' with id " query-id ".")))]
-    {:query_id query-id
-     :completion-chan complete-chan}))
+          complete-chan
+          (a/thread 
+            (binding [errors (atom [])
+                      results-per-query results_per_query]
+              (log/info (str "Starting scraping for query '" query "' with id " query-id " ..."))
+              (scrape-and-save! query-id query)
+              (log/info "... done.")
+            
+              (log/info (str "Starting indexation for query " query "' ..."))
+              (perform-indexation! query-id (mc/find-maps scraped-results-coll {:query_id query-id}))
+              (log/info "... done.")
+            
+              ;; saving errors
+              (doseq [{:keys [item, ^Exception error]} @errors]
+                (mc/save errors-coll {:query_id query-id 
+                                      :item (select-keys item [:_id :query_result_html :result_html :res_index :query :rank
+                                                               :link :meta_description :heading])
+                                      :exception_message (.getMessage error)
+                                      :stackTrace (stack-trace error)}))
+              
+              (log/info (str "Done scraping for query '" query "' with id " query-id "."))
+              
+              ;; returning some useful information
+              {:query_id query-id
+               :query query
+               :errors_count (count @errors)
+               :results_count (mc/count scraped-results-coll {:query_id query-id})
+               :words_count (mc/count words-tables-coll {:query_id query-id})
+               :matrix_entries_count (mc/count matrix-entries-coll {:query_id query-id})
+               })
+            )]
+      {:query_id query-id
+       :completion-chan complete-chan}))
+  ([query] (perform-scraping! query {})))
