@@ -14,6 +14,7 @@
             [ring.middleware.defaults :refer [wrap-defaults site-defaults api-defaults]]
             
             [clojure.core.async :as a]
+            [org.httpkit.client :as http]
             
             [sviepbd.google.crawler :as crawler])
   (:use clojure.repl clojure.pprint))
@@ -22,15 +23,37 @@
 ;; Requests handlers
 ;; ----------------------------------------------------------------
 
-(defn start-scraping [{:keys [query] :as body}]
-  (-> {:message "coucou", :query query} r/response))
+(def ^:private completed-scrapings-chan-in (a/chan 32))
+(def completed-scrapings-mult (a/mult completed-scrapings-chan-in))
+
+(defn send-completions-to-hooks! []
+  (let [hooks (if-let [url (java.lang.System/getenv "ONCOMPLETE_HOOK")] [url] ["http://www.google.com"])
+        c (a/chan 32)]
+    (a/tap completed-scrapings-mult c)
+    (a/go-loop
+      [] (when-let [data (a/<! c)]
+           (doseq [url hooks] (http/post url {:body (update-in data [:query_id] str)}))
+           (recur)))
+    (log/info (str "Ready to send completions data to " hooks))
+    ))
+(defn save-completions-to-db! []
+  (let [coll-name "completions"
+        c (a/chan 32)]
+    (a/go-loop [] (when-let [data (a/<! c)] (-> (monger.collection/insert coll-name data) a/thread a/<!) (recur)))
+    (a/tap completed-scrapings-mult c)
+    (log/info (str "Ready to save completions data in collection " coll-name))))
+
+(defn start-scraping! [{:keys [query] :as body}]
+  (let [{:keys [query_id completion-chan]} (crawler/perform-scraping! query body)]
+    (a/pipe completion-chan completed-scrapings-chan-in false)
+    (-> {:query_id (str query_id), :query query} r/response)))
 
 ;; ----------------------------------------------------------------
 ;; Routes declaration
 ;; ----------------------------------------------------------------
 
 (defroutes app-routes
-  (POST "/start-scraping" {:keys [body]} (start-scraping body))
+  (POST "/start-scraping" {:keys [body]} (start-scraping! body))
   (route/not-found "NOT FOUND")
   )
 
@@ -55,6 +78,13 @@
 ;; Server
 ;; ----------------------------------------------------------------
 
+(defn init! []
+  (log/info "Connecting to MongoDB...")
+  (crawler/connect-mongo!)
+  ;(send-completions-to-hooks!)
+  (save-completions-to-db!)
+  )
+
 (def server-state (atom {:stop-server! nil
                          :port nil}))
 (defn start-server! [port]
@@ -69,4 +99,5 @@
   [& [port]]
   (let [port (-> port (or "3000") java.lang.Integer/parseInt) ;; get port from args, default to 3000
         ]
+    (init!)
     (start-server! port)))

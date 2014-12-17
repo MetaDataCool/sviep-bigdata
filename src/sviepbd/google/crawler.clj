@@ -275,7 +275,7 @@ The underlying presumption is that there are not too many distinct words to fit 
 ;; MongoDB
 ;; ----------------------------------------------------------------
 (def mongo-uri "mongodb://localhost:27017/sviepbd")
-(defn connect-mongo! [] (mg/connect-via-uri! mongo-uri))
+(defn connect-mongo! [] (mg/connect-via-uri! (or (java.lang.System/getenv "MONGOLAB_URI") mongo-uri)))
 (comment (connect-mongo!))
 
 (def queries-coll 
