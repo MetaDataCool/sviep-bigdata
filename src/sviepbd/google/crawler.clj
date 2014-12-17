@@ -82,6 +82,10 @@
   [{:keys [result-elem]}]
   (-> result-elem (select "img") count (> 1)))
 
+(defn- is-books-result? "Detects if a result block is a 'Google books' result" 
+  [{:keys [result-elem]}]
+  (->> result-elem text (re-find #"- Google Books Result") some?))
+
 (defn get-search-results "Breaks a results page into the DOM elements that are individual results,
 returns a seq of one map with a truthy :invalid property if the response page is not well formed (typically because Google has rejected the request)"
   [{:keys [query_result_html start_index], :as page}]
@@ -89,14 +93,15 @@ returns a seq of one map with a truthy :invalid property if the response page is
         results-block (select-one parsed-doc "#res")]
     (if results-block
       (->> (select results-block ".g") 
-        (map (fn [idx r] 
+        (map (fn [idx r]
                (-> page 
                  (assoc :rank (+ start_index idx),:result-elem r,:result_html (html r))
                  (dissoc :start_index :query_result_html))
                ) (range))
-        (remove is-images-result?))
+        (remove (or #(is-images-result? %) #(is-books-result? %)) ) )
       (do 
         (log/warn (str "Invalid result page at index " start_index))
+        (report-error! {:type "INVALID_RESULTS_PAGE", :page page})
         [(assoc page :invalid true)]))
     ))
 
@@ -137,9 +142,11 @@ returns a seq of one map with a truthy :invalid property if the response page is
   (if link 
     (http/get link (fn [resp] 
                      (try (>!!-and-close! ch (add-website r resp))
+                       (catch Exception e (report-error! {:error (exception-data e), :type "ASYNC_WEBSITE_FETCHING", :result r}))
                        (finally (a/close! ch)))
                      ))
     (do (log/warn "No link here : " (select-keys r [:query :rank]))
+      (report-error! {:type "NO_WEBSITE_LINK", :result r})
       (a/close! ch)
       r)))
 
@@ -282,9 +289,22 @@ The underlying presumption is that there are not too many distinct words to fit 
 
 (def errors-coll "Collection where to save error information"
   "errors")
+(defn- errors-to-db-chan [{:keys [query_id query] :as default-data}]
+  (let [ret (a/chan 32)]
+    (a/go-loop [] (when-let [data (a/<! ret)]
+                    (->> (as-> data data 
+                               (assoc data :when (java.util.Date.)) (merge default-data data))
+                      (mc/save errors-coll) a/thread a/<!)
+                    (recur)))
+    ret))
 
 (def dissoc-_id #(dissoc % :_id))
 
+(defn erase-query-data! "Erases all data in the database about the specified query id"
+  [query-id]
+  (doseq [coll [queries-coll scraped-results-coll matrix-entries-coll words-tables-coll errors-coll]]
+    (mc/remove coll {:query_id query-id}))
+  (mc/remove-by-id queries-coll query-id))
 
 ;; ----------------------------------------------------------------
 ;; Scripts
@@ -331,7 +351,7 @@ This includes creating an query document (and therefore MongoID)."
         
           complete-chan
           (a/thread 
-            (binding [errors (atom [])
+            (binding [errors-chan (errors-to-db-chan {:query_id query-id, :query query})
                       results-per-query results_per_query]
               (log/info (str "Starting scraping for query '" query "' with id " query-id " ..."))
               (scrape-and-save! query-id query)
@@ -351,10 +371,12 @@ This includes creating an query document (and therefore MongoID)."
               
               (log/info (str "Done scraping for query '" query "' with id " query-id "."))
               
+              (a/close! errors-chan)
+              
               ;; returning some useful information
               {:query_id query-id
                :query query
-               :errors_count (count @errors)
+               :errors_count (mc/count errors-coll {:query_id query-id})
                :results_count (mc/count scraped-results-coll {:query_id query-id})
                :words_count (mc/count words-tables-coll {:query_id query-id})
                :matrix_entries_count (mc/count matrix-entries-coll {:query_id query-id})
@@ -363,3 +385,11 @@ This includes creating an query document (and therefore MongoID)."
       {:query_id query-id
        :completion-chan complete-chan}))
   ([query] (perform-scraping! query {})))
+
+(comment 
+  (perform-scraping! "my query")
+  (let [{:keys [query_id completion-chan]} *1]
+    (def query-id query_id) (def completion-chan completion-chan))
+  (a/<!! completion-chan)
+  (def last-errors (mc/find-maps errors-coll {:query_id query-id}))
+  )

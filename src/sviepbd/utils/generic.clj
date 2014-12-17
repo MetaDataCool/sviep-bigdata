@@ -4,21 +4,37 @@
             )
   (:use clojure.repl clojure.pprint))
 
-(def ^:dynamic errors "Atom that holds the erros encountered by failsafe-map and failsafe-pmap in a vector" 
-  (atom []))
+(def ^:dynamic errors-chan "Channel into which to put errors." 
+  (a/chan 16))
+(defn report-error! [data] (a/>!! errors-chan data))
+
+(def errors "Atom to contain errors that were put in the error chan, useful for development." 
+  (let [ret (atom [])]
+    (a/go-loop [] (swap! ret conj (a/<! errors-chan)) (recur))
+    ret))
+
+(defn stack-trace "Gets the stack-trace of an Thraowable as a String" [^Throwable e]
+  (let [sw (java.io.StringWriter.)]
+    (.printStackTrace e (java.io.PrintWriter. sw))
+    (.toString sw)))
+
+(defn exception-data "Puts an Excpetion in serializeable form" [^Exception e]
+  {:class (.getName (class e))
+   :message (.getMessage e)
+   :stack_trace (stack-trace e)})
 
 (defn failsafe-map [f coll]
   (->> coll (map #(try (f %) (catch Exception e 
                                (do 
                                  (log/warn (str "Problem here : " e))
-                                 (swap! errors conj {:error e :item %})
+                                 (report-error! {:error (exception-data e) :item %})
                                  nil))))
     (filter some?)))
 (defn failsafe-pmap [f coll]
   (->> coll (pmap #(try (f %) (catch Exception e 
                                 (do 
                                   (log/warn (str "Problem here : " e))
-                                  (swap! errors conj {:error e :item %})
+                                  (report-error! {:error (exception-data e) :item %})
                                   nil))))
     (filter some?)))
 
@@ -54,8 +70,3 @@ Note that unlike pmap, map-pipeline-async will keep the order of the original se
   [port v]
   (when (some? v) (a/>!! port v))
   (a/close! port))
-
-(defn stack-trace [^Throwable e]
-  (let [sw (java.io.StringWriter.)]
-    (.printStackTrace e (java.io.PrintWriter. sw))
-    (.toString sw)))
