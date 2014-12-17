@@ -70,3 +70,14 @@ Note that unlike pmap, map-pipeline-async will keep the order of the original se
   [port v]
   (when (some? v) (a/>!! port v))
   (a/close! port))
+
+(defmacro godochan "Creates a go-loop that executes body for each (non-nil) element that comes out of ch with the provided binding."
+  [[e ch] & body]
+  `(let [c# ~ch]
+     (a/go-loop 
+       [] (let [e# (a/<! c#)]
+            (when (some? e#)
+              (let [~e e#] ~@body)
+              (recur))
+            ))
+     ))

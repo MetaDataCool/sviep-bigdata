@@ -71,12 +71,13 @@
          ))
 (defn fetch-result-page-a "Asynchronous version of fetch-result-page"
   [page ch]
-  (http/get "http://www.google.com/search" (result-page-request-opts page) 
-            (fn [resp] 
-              (>!!-and-close! 
-                ch (assoc page :query_result_html (resp :body)) 
-                ))
-            ))
+  (a/thread 
+    (http/get "http://www.google.com/search" (result-page-request-opts page) 
+           (fn [resp] 
+             (>!!-and-close! 
+               ch (assoc page :query_result_html (resp :body)) 
+               ))
+           )))
 
 (defn- is-images-result? "Detects if a result block is an 'images' result" 
   [{:keys [result-elem]}]
@@ -139,16 +140,17 @@ returns a seq of one map with a truthy :invalid property if the response page is
 
 (defn fetch-website-a "Fetches the HTML of the website of the result; meant to be called with pipeline-async" 
   [{:keys [link] :as r} ch]
-  (if link 
-    (http/get link (fn [resp] 
-                     (try (>!!-and-close! ch (add-website r resp))
-                       (catch Exception e (report-error! {:error (exception-data e), :type "ASYNC_WEBSITE_FETCHING", :result r}))
-                       (finally (a/close! ch)))
-                     ))
-    (do (log/warn "No link here : " (select-keys r [:query :rank]))
-      (report-error! {:type "NO_WEBSITE_LINK", :result r})
-      (a/close! ch)
-      r)))
+  (a/thread 
+    (if link 
+     (http/get link (fn [resp] 
+                      (try (>!!-and-close! ch (add-website r resp))
+                        (catch Exception e (report-error! {:error (exception-data e), :type "ASYNC_WEBSITE_FETCHING", :result r}))
+                        (finally (a/close! ch)))
+                      ))
+     (do (log/warn "No link here : " (select-keys r [:query :rank]))
+       (report-error! {:type "NO_WEBSITE_LINK", :result r})
+       (a/close! ch)
+       r))))
 
 (defn- add-rank "Adds a :rank property to a sequence of maps." 
   [s] (map (fn [i item] (assoc item :rank i)) (range) s))
@@ -291,11 +293,9 @@ The underlying presumption is that there are not too many distinct words to fit 
   "errors")
 (defn- errors-to-db-chan [{:keys [query_id query] :as default-data}]
   (let [ret (a/chan 32)]
-    (a/go-loop [] (when-let [data (a/<! ret)]
-                    (->> (as-> data data 
-                               (assoc data :when (java.util.Date.)) (merge default-data data))
-                      (mc/save errors-coll) a/thread a/<!)
-                    (recur)))
+    (godochan [data ret] (->> (as-> data data 
+                                    (assoc data :when (java.util.Date.)) (merge default-data data))
+                           (mc/save errors-coll) a/thread a/<!))
     ret))
 
 (def dissoc-_id #(dissoc % :_id))

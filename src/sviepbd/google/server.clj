@@ -16,11 +16,13 @@
             [clojure.core.async :as a]
             [org.httpkit.client :as http]
             
-            [sviepbd.google.crawler :as crawler])
+            [sviepbd.google.crawler :as crawler]
+            
+            [sviepbd.utils.generic :as u])
   (:use clojure.repl clojure.pprint))
 
 ;; ----------------------------------------------------------------
-;; Requests handlers
+;; Completion notification logic
 ;; ----------------------------------------------------------------
 
 (def ^:private completed-scrapings-chan-in (a/chan 32))
@@ -30,18 +32,20 @@
   (let [hooks (if-let [url (java.lang.System/getenv "ONCOMPLETE_HOOK")] [url] ["http://www.google.com"])
         c (a/chan 32)]
     (a/tap completed-scrapings-mult c)
-    (a/go-loop
-      [] (when-let [data (a/<! c)]
-           (doseq [url hooks] (http/post url {:body (update-in data [:query_id] str)}))
-           (recur)))
+    (u/godochan [data c] 
+             (doseq [url hooks] (http/post url {:body (update-in data [:query_id] str)})))
     (log/info (str "Ready to send completions data to " hooks))
     ))
 (defn save-completions-to-db! []
   (let [coll-name "completions"
         c (a/chan 32)]
-    (a/go-loop [] (when-let [data (a/<! c)] (-> (monger.collection/insert coll-name data) a/thread a/<!) (recur)))
+    (u/godochan [data c] (-> (monger.collection/insert coll-name data) a/thread a/<!))
     (a/tap completed-scrapings-mult c)
     (log/info (str "Ready to save completions data in collection " coll-name))))
+
+;; ----------------------------------------------------------------
+;; Requests handlers
+;; ----------------------------------------------------------------
 
 (defn start-scraping! [{:keys [query] :as body}]
   (let [{:keys [query_id completion-chan]} (crawler/perform-scraping! query body)]
