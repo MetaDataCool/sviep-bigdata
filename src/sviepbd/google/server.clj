@@ -75,9 +75,6 @@
     (wrap-defaults api-defaults)
     ))
 
-(def server-state (atom {:stop-server! nil
-                         :port nil}))
-
 ;; ----------------------------------------------------------------
 ;; Server
 ;; ----------------------------------------------------------------
@@ -89,19 +86,11 @@
   (save-completions-to-db!)
   )
 
-(def server-state (atom {:stop-server! nil
-                         :port nil}))
-(defn start-server! [port]
-  (reset! server-state {:stop-server! (server/run-server #(app %) {:port port})
-                        :port port}))
-(defn stop-server! []
-  ((:stop-server! @server-state))
-  (reset! server-state (atom {:stop-server! nil, :port nil})))
+(defn start-server! [port] (server/run-server #(app %) {:port port}))
 
 (defn -main
   "I don't do a whole lot ... yet."
   [& [port]]
-  (let [port (-> port (or "3000") java.lang.Integer/parseInt) ;; get port from args, default to 3000
-        ]
+  (let [port (-> port (or "3000") java.lang.Integer/parseInt)] ;; get port from args, default to 3000
     (init!)
     (start-server! port)))
