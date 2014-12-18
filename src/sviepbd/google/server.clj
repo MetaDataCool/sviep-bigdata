@@ -11,7 +11,7 @@
             [ring.middleware.params :as params]
             [ring.middleware.keyword-params :as kw-params]
             [ring.middleware.json :as ring-json]
-            [ring.middleware.defaults :refer [wrap-defaults site-defaults api-defaults]]
+            [ring.middleware.defaults :refer [wrap-defaults api-defaults]]
             
             [clojure.core.async :as a]
             [org.httpkit.client :as http]
@@ -29,15 +29,17 @@
 (def completed-scrapings-mult (a/mult completed-scrapings-chan-in))
 
 (defn send-completions-to-hooks! []
-  (let [hooks (if-let [url (java.lang.System/getenv "ONCOMPLETE_HOOK")] [url] ["http://www.google.com"])
+  (let [hooks (if-let [config (java.lang.System/getenv "ONCOMPLETE_HOOKS")]
+                (->> (clojure.string/split config #"[ ,]+") (remove empty?))
+                [])
         c (a/chan 32)]
     (a/tap completed-scrapings-mult c)
-    (u/godochan [data c] 
-             (doseq [url hooks] (http/post url {:body (update-in data [:query_id] str)})))
+    (u/godochan [data c]
+             (a/<! (a/thread (doseq [url hooks] (http/post url {:body (update-in data [:query_id] str)})) )))
     (log/info (str "Ready to send completions data to " hooks))
     ))
 (defn save-completions-to-db! []
-  (let [coll-name "completions"
+  (let [coll-name "completions" ; TODO may want to move this with other collections declarations
         c (a/chan 32)]
     (u/godochan [data c] (-> (monger.collection/insert coll-name data) a/thread a/<!))
     (a/tap completed-scrapings-mult c)
@@ -67,6 +69,7 @@
 
 (def app 
   (-> #(app-routes %)
+    ;; ---- Middleware ----
     ;; requests go from bottom to top, responses from top to bottom
     
     (ring-json/wrap-json-body {:keywords? true})
@@ -86,7 +89,10 @@
   (save-completions-to-db!)
   )
 
-(defn start-server! [port] (server/run-server #(app %) {:port port}))
+(defn start-server! [port] 
+  (let [stopper (server/run-server #(app %) {:port port})]
+    (log/info (str "Server started on port " port ", GO BEARS!"))
+    stopper))
 
 (defn -main
   "I don't do a whole lot ... yet."

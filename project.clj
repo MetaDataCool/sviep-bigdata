@@ -25,9 +25,9 @@
                  [clatrix "0.4.0"] ;; native implementation of matrices using JBLAS
                  ;[org.la4j/la4j "0.4.9"] ;; Java LA library with sparse matrix support
                  
-                 [org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.
-                 [com.h2database/h2 "1.3.170"] ;; H2
-                 [korma "0.3.0"]; Korma : Clojure DSL for RDBMS.
+                 ;[org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.
+                 ;[com.h2database/h2 "1.3.170"] ;; H2
+                 ;[korma "0.3.0"]; Korma : Clojure DSL for RDBMS.
                  
                  [compojure "1.2.1"]; routing library
                  [ring-server "0.3.1"]; wrapper for Netty, handles HTTP
@@ -36,7 +36,11 @@
                  ]
   :source-paths ["src"]
   :java-source-paths ["javasrc"]
-  :main ^:skip-aot sviepbd.core
-  :repl-options {:init-ns sviepbd.google.crawler}
   :target-path "target/%s"
-  :profiles {:uberjar {:aot :all}})
+  
+  :profiles {:uberjar {:aot :all}}
+  
+  :main ^:skip-aot sviepbd.google.server
+  :repl-options {:init-ns sviepbd.google.crawler}
+  :min-lein-version "2.0.0"
+  )
