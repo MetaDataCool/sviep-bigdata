@@ -10,8 +10,8 @@
                  [ring/ring-codec "1.0.0"] ;; Utility library for encoding and decoding data
                  [cheshire "5.3.1"]; JSON encoding library for Clojure. 
                  [com.taoensso/timbre "3.1.6"]; Clojure logging and profiling library.
-                 [org.clojure/java.jdbc "0.3.6"]; JDBC wrapper
-                 [postgresql/postgresql "9.1-901.jdbc4"]
+                 ;[org.clojure/java.jdbc "0.3.6"]; JDBC wrapper
+                 ;[postgresql/postgresql "9.1-901.jdbc4"]
                  [clj-time "0.8.0"] ; A date and time library for Clojure, wrapping the Joda Time library.
                  [com.novemberain/monger "1.7.0"]; MongoDB driver.
                  [com.googlecode.htmlcompressor/htmlcompressor "1.4"][com.yahoo.platform.yui/yuicompressor "2.4.8"];; HTML minifier 
