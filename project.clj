@@ -21,8 +21,8 @@
                  [edu.stanford.nlp/stanford-corenlp "3.5.0"] ;; A Suite of Core Natural Language Processing Tools
                  [edu.stanford.nlp/stanford-corenlp "3.5.0" :classifier "models"]
                  
-                 [net.mikera/core.matrix "0.31.1"] ;; Clojure matrix specification
-                 [clatrix "0.4.0"] ;; native implementation of matrices using JBLAS
+                 ;[net.mikera/core.matrix "0.31.1"] ;; Clojure matrix specification
+                 ;[clatrix "0.4.0"] ;; native implementation of matrices using JBLAS
                  ;[org.la4j/la4j "0.4.9"] ;; Java LA library with sparse matrix support
                  
                  ;[org.xerial/sqlite-jdbc "3.7.2"]; SQLite java driver.

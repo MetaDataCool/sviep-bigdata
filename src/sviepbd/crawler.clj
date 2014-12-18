@@ -11,7 +11,7 @@
             [taoensso.timbre :as log]
             [cheshire.core :as json]
             [clojure.java.io :as io]
-            [clojure.java.jdbc :as sql]
+            ;[clojure.java.jdbc :as sql]
             [clj-time.core :as time]
             [clj-time.format :as tf]
             [clj-time.coerce :as tc]
@@ -468,77 +468,78 @@
 
 
 ;; ----------------------------------------------------------------
-;; SQL DB
+;; SQL DB - deprecated
 ;; ----------------------------------------------------------------
-(def sql-db {:classname "org.postgresql.Driver" 
-             :subprotocol "postgresql"
-             :subname "//localhost:5432/mydb"
-             :user "postgres"
-             :password "uzHHoabMxf0E"})
-(def orgs-table "organizations")
-(def fb-posts-table "fb_posts")
-(defmacro with-mydb [& body] `(sql/with-connection sql-db ~@body))
+(comment 
+  (def sql-db {:classname "org.postgresql.Driver" 
+              :subprotocol "postgresql"
+              :subname "//localhost:5432/mydb"
+              :user "postgres"
+              :password "uzHHoabMxf0E"})
+  (def orgs-table "organizations")
+  (def fb-posts-table "fb_posts")
+  (defmacro with-mydb [& body] `(sql/with-connection sql-db ~@body))
+  
+  (def organizations-keys 
+    [:_id
+     :accountability_and_transparency_rating
+     :address
+     :administrative_expenses
+     :audited_financials
+     :audited_financials_prepared_by_independent_accountant
+     :board_listed_board_members_not_compensated
+     :board_members_listed
+     :category
+     :cause
+     :ceo_listed_with_salary
+     :conflict_of_interest_policy
+     :documents_board_meeting_minutes
+     :does_not_provide_loans_to_or_receive_loans_from_related_parties
+     :donor_privacy_policy
+     :ein
+     :facebook_id
+     :fax
+     ;:fb_posts
+     :financial_rating
+     :form_990
+     :fundraising_efficiency
+     :fundraising_expenses
+     :independent_voting_board_members
+     :is_administrative_expenses
+     :is_fundraising_expenses
+     :is_net_assets
+     :is_payments_to_affiliates
+     :is_program_expenses
+     :is_total_functional_expenses
+     :is_total_revenue
+     :key_staff_listed
+     :location
+     :mission_statement
+     :no_material_diversion_of_assets
+     :org_name
+     :org_page_url
+     :overall_rating
+     :primary_revenue_growth
+     :process_for_determining_ceo_compensation
+     :program_expenses_growth
+     :provided_copy_of_form_990_to_orgs_governing_body_in_advance
+     :records_retention_and_destruction_policy
+     :result_page_url
+     :tagline
+     :tel
+     :title
+     ;:website_html
+     :website_url
+     :whistleblower_policy
+     ])
 
-(def organizations-keys 
-  [:_id
-   :accountability_and_transparency_rating
-   :address
-   :administrative_expenses
-   :audited_financials
-   :audited_financials_prepared_by_independent_accountant
-   :board_listed_board_members_not_compensated
-   :board_members_listed
-   :category
-   :cause
-   :ceo_listed_with_salary
-   :conflict_of_interest_policy
-   :documents_board_meeting_minutes
-   :does_not_provide_loans_to_or_receive_loans_from_related_parties
-   :donor_privacy_policy
-   :ein
-   :facebook_id
-   :fax
-   ;:fb_posts
-   :financial_rating
-   :form_990
-   :fundraising_efficiency
-   :fundraising_expenses
-   :independent_voting_board_members
-   :is_administrative_expenses
-   :is_fundraising_expenses
-   :is_net_assets
-   :is_payments_to_affiliates
-   :is_program_expenses
-   :is_total_functional_expenses
-   :is_total_revenue
-   :key_staff_listed
-   :location
-   :mission_statement
-   :no_material_diversion_of_assets
-   :org_name
-   :org_page_url
-   :overall_rating
-   :primary_revenue_growth
-   :process_for_determining_ceo_compensation
-   :program_expenses_growth
-   :provided_copy_of_form_990_to_orgs_governing_body_in_advance
-   :records_retention_and_destruction_policy
-   :result_page_url
-   :tagline
-   :tel
-   :title
-   ;:website_html
-   :website_url
-   :whistleblower_policy
-   ])
+  (def fb-posts-keys #{:caption :created_time :description :icon :id 
+                       :link :message :name :object_id :status_type 
+                       :story :type :updated_time :_id
+                       :organization_id})
 
-(def fb-posts-keys #{:caption :created_time :description :icon :id 
-                     :link :message :name :object_id :status_type 
-                     :story :type :updated_time :_id
-                     :organization_id})
-
-(defn get-posts-doc [] (mc/find-maps fb-posts-coll))
-
+  (defn get-posts-doc [] (mc/find-maps fb-posts-coll))
+)
 (comment
   ;; transfer mongodb orgs to sql db
   (->> (fetch-orgs-docs)
