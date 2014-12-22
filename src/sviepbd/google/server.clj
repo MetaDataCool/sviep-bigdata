@@ -89,7 +89,7 @@
   (save-completions-to-db!)
   
   (let [interval (-> (java.lang.System/getenv "GOOGLE_CALLS_INTERVAL_MS") (or "0") java.lang.Integer/parseInt)] 
-    (log/info "Spacing HTTP calls to Google by " interval "ms")
+    (log/info "Spacing HTTP calls to Google by" interval "ms")
     (crawler/allow-google-calls! interval))
   )
 

@@ -45,11 +45,11 @@
 
 (def tokenize-pipeline "CoreNLP pipeline for tokenization"
   (StanfordCoreNLP. (doto (java.util.Properties.) 
-                      (.put "annotators" (s/join ", " ["tokenize" "ssplit" "pos" "lemma"])) )))
+                      (.put "annotators" (s/join ", " ["tokenize"])) )))
 
 
 (defn- token-as-map [^Annotation token]
-  {:word (get-text-ann token), :pos (get-pos-ann token), :lemma (get-lemma-ann token)})
+  {:word (get-text-ann token), :lemma (get-text-ann token)})
 
 (defn lowercase-lemma [{:keys [lemma] :as token}]
   (assoc token :lemma (s/lower-case lemma)))
@@ -61,11 +61,8 @@
     (map token-as-map)
     ))
 
-(def non-word-pos "A set of Part-Of-Speech tags that are not words."
-  #{"$" "``" "''" "(" ")" "," "--" "." ":" "SYM" "|"})
-
 (defn non-word-token? "Checks is the argument is a non-word token." 
-  [{:keys [pos] :as token}] (non-word-pos pos))
+  [{:keys [word] :as token}] (nil? (re-matches #"\w[\w\-']*\w" word)))
 
 ;; ----------------------------------------------------------------
 ;; Example

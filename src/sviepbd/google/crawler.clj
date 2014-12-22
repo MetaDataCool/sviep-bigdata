@@ -176,8 +176,6 @@ returns a seq of one map with a truthy :invalid property if the response page is
     (def wikipedia-seq-bag (to-seq-BoW wikipedia-bag))
     ))
 
-(defn- only-alpha? "Checks if a token contains only alphabet characters" 
-  [{:keys [lemma]}] (re-matches #"[a-z]*" lemma))
 (defn- too-short? 
   [{:keys [lemma]}] (-> (count lemma) (< 3)))
 
@@ -186,7 +184,6 @@ returns a seq of one map with a truthy :invalid property if the response page is
   (->> text nlpu/tokenize 
     (remove nlpu/non-word-token?) ;; removing symbols etc.
     (map nlpu/lowercase-lemma) ;; putting all lemmas to lower-case
-    (filter only-alpha?)
     (remove nlpu/stopword-token?) ;; removing stopwords ("the", "a" "be", ...)
     (remove too-short?)
     ))

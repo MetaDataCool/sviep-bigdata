@@ -19,7 +19,7 @@
                  
                  ;; Stanford CoreNLP
                  [edu.stanford.nlp/stanford-corenlp "3.5.0"] ;; A Suite of Core Natural Language Processing Tools
-                 [edu.stanford.nlp/stanford-corenlp "3.5.0" :classifier "models"]
+                 ;[edu.stanford.nlp/stanford-corenlp "3.5.0" :classifier "models"] ;; REMOVED because took too much room for Heroku deployment.
                  
                  ;[net.mikera/core.matrix "0.31.1"] ;; Clojure matrix specification
                  ;[clatrix "0.4.0"] ;; native implementation of matrices using JBLAS
