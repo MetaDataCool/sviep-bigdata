@@ -63,21 +63,30 @@
                   "start" (str start_index)
                   "lr" "lang_en"}})
 
+(def ^:private google-http-chan "A channel to globally control the frequency of HTTP calls to google. A dummy 'clearance' value has to be taken from that channel before sending an HTTP request to google." 
+  (a/chan))
+
+(defn allow-google-calls! "Allows a google HTTP call (by putting an infinite sequence of dummy values into google-http-chan separated by interval-ms milliseconds time intervals."
+  [interval-ms] (a/go-loop [] (a/>! google-http-chan :go-for-it) (a/<! (a/timeout interval-ms)) (recur)))
+
 (defn fetch-result-page "Fetches a results page of the specified search at the specified page index"
   [{:keys [query_terms start_index] :as page}]
+  (a/<!! google-http-chan)
   (assoc page 
          :query_result_html (-> @(http/get "http://www.google.com/search" (result-page-request-opts page)) ;; getting the results in English only
                               :body)
          ))
 (defn fetch-result-page-a "Asynchronous version of fetch-result-page"
   [page ch]
-  (a/thread 
-    (http/get "http://www.google.com/search" (result-page-request-opts page) 
-           (fn [resp] 
-             (>!!-and-close! 
-               ch (assoc page :query_result_html (resp :body)) 
-               ))
-           )))
+  (a/go 
+    (a/<! google-http-chan)
+    (a/thread 
+     (http/get "http://www.google.com/search" (result-page-request-opts page) 
+            (fn [resp] 
+              (>!!-and-close! 
+                ch (assoc page :query_result_html (resp :body)) 
+                ))
+            ))))
 
 (defn- is-images-result? "Detects if a result block is an 'images' result" 
   [{:keys [result-elem]}]
