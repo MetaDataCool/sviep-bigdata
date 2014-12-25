@@ -6,10 +6,6 @@
             [compojure.route :as route]
             [ring.util.response :as r]
             
-            [ring.middleware.cookies :as cookies]
-            [ring.middleware.content-type :as content-type]
-            [ring.middleware.params :as params]
-            [ring.middleware.keyword-params :as kw-params]
             [ring.middleware.json :as ring-json]
             [ring.middleware.defaults :refer [wrap-defaults api-defaults]]
             
@@ -99,7 +95,7 @@
     stopper))
 
 (defn -main
-  "I don't do a whole lot ... yet."
+  "Connects to the environment and launches the web server when ready."
   [& [port]]
   (let [port (-> port (or "3000") java.lang.Integer/parseInt)] ;; get port from args, default to 3000
     (init!)

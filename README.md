@@ -66,7 +66,7 @@ will be saved there.
 ### Deployment configuration
 
 Configuration is done by setting the following environment variables:
-- `MONGOLAB_URI` : a MongoDB URI for the database (not necessarily hosted on MongoLab though). Will default to `"mongodb://localhost:27017/sviepbd"` is not set.
+- `MONGOLAB_URI` : a MongoDB URI for the database (not necessarily hosted on MongoLab though). Will default to `"mongodb://localhost:27017/sviepbd"` if not set.
 - `GOOGLE_CALLS_INTERVAL_MS`: A nonegative integer, the minimum time interval between 2 HTTP calls to Google, in milliseconds. Used to globally limit the number of HTTP calls to Google. Will default to `0` if not set.
 
 # Prerequisites
